@@ -1,139 +1,243 @@
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-import sqlite3, random, os
-from datetime import datetime
+import sqlite3, random, os, time, asyncio
 
-BASE=os.path.dirname(os.path.abspath(__file__))
-DB=os.path.join(BASE,"world.db")
-app=FastAPI(title="Reino Vivo v0.2")
+BASE = os.path.dirname(os.path.abspath(__file__))
+DB = os.path.join(BASE, "world.db")
+app = FastAPI(title="Reino Vivo v0.4")
+
+MALE = ["Aren","Bran","Corvin","Edric","Garen","Hugo","Ivar","Jon","Kael","Lucan","Marek","Nolan","Oren","Perrin","Ronan","Tomas"]
+FEMALE = ["Aelia","Brina","Celia","Fiona","Gwen","Isla","Lena","Mara","Neria","Olia","Rhea","Selene","Talia","Una","Vera","Yara"]
+JOBS = ["agricultor","artesano","mercader","pescador","minero","soldado","guardia","constructor","curandero","escriba","panadero","carpintero","tejedor","cocinero","marinero"]
+GOALS = ["familia","riqueza","prestigio","proteger su hogar","aprender","viajar","tener hijos"]
+FEARS = ["pobreza","guerra","enfermedad","perder un familiar","deudas","soledad"]
+BELIEFS = ["tradición","honor","familia","fortuna","naturaleza","leyes"]
 
 def db():
-    c=sqlite3.connect(DB)
-    c.row_factory=sqlite3.Row
+    c = sqlite3.connect(DB, timeout=30)
+    c.row_factory = sqlite3.Row
     return c
 
 def init():
-    c=db()
+    c = db()
     c.executescript("""
-    CREATE TABLE IF NOT EXISTS world(
-      id INTEGER PRIMARY KEY CHECK(id=1),
-      year INTEGER NOT NULL,
-      day INTEGER NOT NULL,
-      paused INTEGER NOT NULL DEFAULT 0,
-      speed INTEGER NOT NULL DEFAULT 1
-    );
-    CREATE TABLE IF NOT EXISTS kingdoms(
-      id INTEGER PRIMARY KEY,
-      name TEXT, ruler TEXT, ruler_title TEXT, population INTEGER,
-      gold REAL, stability REAL
-    );
-    CREATE TABLE IF NOT EXISTS cities(
-      id INTEGER PRIMARY KEY, kingdom_id INTEGER, name TEXT, population INTEGER
-    );
+    CREATE TABLE IF NOT EXISTS world(id INTEGER PRIMARY KEY CHECK(id=1), year INTEGER, day INTEGER, speed INTEGER, paused INTEGER, last_real REAL);
+    CREATE TABLE IF NOT EXISTS kingdoms(id INTEGER PRIMARY KEY, name TEXT, ruler TEXT, ruler_title TEXT, gold INTEGER, stability INTEGER);
     CREATE TABLE IF NOT EXISTS people(
-      id INTEGER PRIMARY KEY, kingdom_id INTEGER, name TEXT, sex TEXT,
-      age INTEGER, job TEXT, wealth REAL, status TEXT, alive INTEGER DEFAULT 1
+        id INTEGER PRIMARY KEY, name TEXT, sex TEXT, age INTEGER, kingdom_id INTEGER, job TEXT,
+        wealth INTEGER, status TEXT, alive INTEGER, education INTEGER, reputation INTEGER,
+        goal TEXT, fear TEXT, belief TEXT, mother_id INTEGER, father_id INTEGER, partner_id INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS relationships(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, a_id INTEGER, b_id INTEGER, kind TEXT, strength INTEGER,
+        UNIQUE(a_id,b_id,kind)
+    );
+    CREATE TABLE IF NOT EXISTS knowledge(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, person_id INTEGER, subject TEXT, content TEXT,
+        certainty INTEGER, source TEXT
     );
     CREATE TABLE IF NOT EXISTS events(
-      id INTEGER PRIMARY KEY AUTOINCREMENT, world_day INTEGER,
-      title TEXT, description TEXT, importance INTEGER
+        id INTEGER PRIMARY KEY AUTOINCREMENT, world_day INTEGER, title TEXT, description TEXT, importance INTEGER
     );
     """)
-    if c.execute("SELECT COUNT(*) FROM world").fetchone()[0]==0:
-        c.execute("INSERT INTO world VALUES(1,247,1,0,1)")
-        kingdoms=[
-            (1,"Aurelia","Elira I","Reina",1000,100000,82),
-            (2,"Valdoria","Darian II","Rey",1000,100000,79)
-        ]
-        c.executemany("INSERT INTO kingdoms VALUES(?,?,?,?,?,?,?)",kingdoms)
-        cities=[(1,1,"Puerto Alba",360),(2,1,"Río Claro",330),(3,1,"Bosque Alto",310),
-                (4,2,"Corona",380),(5,2,"Monteluz",320),(6,2,"Bahía Gris",300)]
-        c.executemany("INSERT INTO cities VALUES(?,?,?,?)",cities)
-        male_jobs=["Agricultor","Herrero","Soldado","Mercader","Carpintero","Pescador"]
-        female_jobs=["Agricultora","Tejedora","Comerciante","Curandera","Panadera","Escriba"]
-        names_m=["Aldric","Bran","Cedric","Dorian","Edric","Gareth","Hugo","Ivar","Jon","Lucan","Marek","Oren"]
-        names_f=["Aelia","Brina","Celia","Dara","Elin","Fara","Lyra","Mira","Nadia","Rhea","Sera","Talia"]
-        rows=[]
-        pid=1
-        for k in (1,2):
-            for i in range(500):
-                age=random.choices(range(1,81),weights=[1 if a<15 else 2 if a<60 else 1 for a in range(1,81)])[0]
-                rows.append((pid,k,random.choice(names_m)+f" {pid}", "M",age,random.choice(male_jobs),round(random.uniform(10,2500),2),"Común"))
-                pid+=1
-            for i in range(500):
-                age=random.choices(range(1,81),weights=[1 if a<15 else 2 if a<60 else 1 for a in range(1,81)])[0]
-                rows.append((pid,k,random.choice(names_f)+f" {pid}", "F",age,random.choice(female_jobs),round(random.uniform(10,2500),2),"Común"))
-                pid+=1
-        c.executemany("INSERT INTO people(id,kingdom_id,name,sex,age,job,wealth,status) VALUES(?,?,?,?,?,?,?,?)",rows)
-        c.execute("INSERT INTO events(world_day,title,description,importance) VALUES(1,'El mundo despierta','Los dos reinos continúan su historia en el año 247.',3)")
+    if c.execute("SELECT COUNT(*) FROM world").fetchone()[0] == 0:
+        c.execute("INSERT INTO world VALUES(1,247,1,1,0,?)", (time.time(),))
+        c.execute("INSERT INTO kingdoms VALUES(1,'Aurelia','Elira I','Reina',100000,82)")
+        c.execute("INSERT INTO kingdoms VALUES(2,'Valdoria','Darian II','Rey',100000,78)")
+        random.seed(247)
+        pid = 1
+        for k in (1, 2):
+            for i in range(1000):
+                sex = "M" if i < 500 else "F"
+                names = MALE if sex == "M" else FEMALE
+                age = random.randint(1, 75)
+                job = random.choice(JOBS) if age >= 15 else "estudiante"
+                wealth = random.randint(10, 500) if age >= 15 else random.randint(1, 30)
+                status = "noble" if i < 20 else ("real" if i < 25 else "común")
+                c.execute("""INSERT INTO people
+                (id,name,sex,age,kingdom_id,job,wealth,status,alive,education,reputation,goal,fear,belief,mother_id,father_id,partner_id)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (pid,f"{random.choice(names)} {pid}",sex,age,k,job,wealth,status,1,
+                 random.randint(0,100),random.randint(0,100),random.choice(GOALS),
+                 random.choice(FEARS),random.choice(BELIEFS),None,None,None))
+                pid += 1
+
+        # Initial family links: adults of opposite sex in small households.
+        for k in (1, 2):
+            males = [r["id"] for r in c.execute("SELECT id FROM people WHERE kingdom_id=? AND sex='M' AND age BETWEEN 20 AND 55", (k,)).fetchall()]
+            females = [r["id"] for r in c.execute("SELECT id FROM people WHERE kingdom_id=? AND sex='F' AND age BETWEEN 20 AND 50", (k,)).fetchall()]
+            random.shuffle(males); random.shuffle(females)
+            for a,b in zip(males[:140], females[:140]):
+                if random.random() < 0.55:
+                    c.execute("UPDATE people SET partner_id=? WHERE id=?", (b,a))
+                    c.execute("UPDATE people SET partner_id=? WHERE id=?", (a,b))
+                    c.execute("INSERT OR IGNORE INTO relationships(a_id,b_id,kind,strength) VALUES(?,?,?,?)", (a,b,"pareja",random.randint(45,90)))
+                    c.execute("INSERT OR IGNORE INTO relationships(a_id,b_id,kind,strength) VALUES(?,?,?,?)", (b,a,"pareja",random.randint(45,90)))
+
+        # Seed individual knowledge: not everyone knows everything.
+        for r in c.execute("SELECT id,name,kingdom_id FROM people WHERE alive=1 ORDER BY id LIMIT 120").fetchall():
+            c.execute("INSERT INTO knowledge(person_id,subject,content,certainty,source) VALUES(?,?,?,?,?)",
+                      (r["id"],"mundo","Vive en " + ("Aurelia" if r["kingdom_id"]==1 else "Valdoria"),100,"experiencia"))
+        c.execute("INSERT INTO events(world_day,title,description,importance) VALUES(1,?,?,?)",
+                  ("Nacimiento del Reino Vivo","Dos reinos comienzan una nueva era con 2.000 habitantes. Algunas familias ya tienen vínculos entre sí.",5))
     c.commit(); c.close()
 
+def world_day(w):
+    return (w["year"] - 247) * 365 + w["day"]
+
+def add_event(c, wd, title, desc, importance):
+    c.execute("INSERT INTO events(world_day,title,description,importance) VALUES(?,?,?,?)",
+              (wd,title,desc,importance))
+
 def tick(days=1):
-    c=db()
-    w=c.execute("SELECT * FROM world WHERE id=1").fetchone()
-    if w["paused"]:
-        c.close(); return
+    c = db()
     for _ in range(days):
-        d=w["day"]+1; y=w["year"]
-        if d>365: d=1; y+=1
-        c.execute("UPDATE people SET age=age+1 WHERE alive=1 AND (age*365 + ?) % 365 = 0",(d,))
-        # lightweight emergent events
-        if random.random()<0.22:
-            k=random.choice(c.execute("SELECT * FROM kingdoms").fetchall())
-            templates=[
-                ("Mercado en movimiento",f"Los precios en {k['name']} cambiaron por variaciones en la oferta y la demanda."),
-                ("Rumores en la corte",f"Circulan rumores entre nobles de {k['name']}. Su veracidad aún no está confirmada."),
-                ("Problemas de cosecha",f"Algunas comunidades de {k['name']} reportan una cosecha menor a la esperada."),
-                ("Viajeros",f"Mercaderes y viajeros llegaron a distintas ciudades de {k['name']}.")
+        w = c.execute("SELECT * FROM world WHERE id=1").fetchone()
+        wd = world_day(w) + 1
+        day, year = w["day"] + 1, w["year"]
+        if day > 365:
+            day, year = 1, year + 1
+            c.execute("UPDATE people SET age=age+1 WHERE alive=1")
+
+        people = c.execute("SELECT id,age,wealth,job,kingdom_id FROM people WHERE alive=1").fetchall()
+        for p in people:
+            wealth = max(0, p["wealth"] + random.randint(-3,5))
+            if p["job"] == "agricultor" and random.random() < .08:
+                wealth += random.randint(5,25)
+            if p["job"] == "mercader" and random.random() < .08:
+                wealth += random.randint(5,30)
+            c.execute("UPDATE people SET wealth=? WHERE id=?", (wealth,p["id"]))
+            age = p["age"]
+            chance = .00015 if age < 50 else (.0015 if age < 70 else .008)
+            if random.random() < chance:
+                c.execute("UPDATE people SET alive=0 WHERE id=?", (p["id"],))
+                if p["age"] >= 60:
+                    add_event(c,wd,"Una muerte en la comunidad",
+                              "Una persona de edad avanzada ha muerto; sus relaciones y bienes quedan en manos de su entorno.",2)
+
+        # Small autonomous family formation.
+        for k in (1,2):
+            candidates = c.execute("""SELECT id FROM people
+                WHERE alive=1 AND kingdom_id=? AND partner_id IS NULL AND age BETWEEN 20 AND 38""",(k,)).fetchall()
+            ids = [x["id"] for x in candidates]
+            random.shuffle(ids)
+            if len(ids) >= 2 and random.random() < .10:
+                a,b = ids[0], ids[1]
+                sa,sb = c.execute("SELECT sex FROM people WHERE id=?", (a,)).fetchone()[0], c.execute("SELECT sex FROM people WHERE id=?", (b,)).fetchone()[0]
+                if sa != sb:
+                    c.execute("UPDATE people SET partner_id=? WHERE id=?", (b,a))
+                    c.execute("UPDATE people SET partner_id=? WHERE id=?", (a,b))
+                    c.execute("INSERT OR IGNORE INTO relationships(a_id,b_id,kind,strength) VALUES(?,?,?,?)",(a,b,"pareja",50))
+                    c.execute("INSERT OR IGNORE INTO relationships(a_id,b_id,kind,strength) VALUES(?,?,?,?)",(b,a,"pareja",50))
+
+        # Births only from existing couples; child stores real parents.
+        for k in (1,2):
+            couples = c.execute("""SELECT p.id AS mother, p.partner_id AS father
+                FROM people p JOIN people f ON f.id=p.partner_id
+                WHERE p.alive=1 AND f.alive=1 AND p.kingdom_id=? AND p.sex='F'
+                AND p.age BETWEEN 18 AND 40 AND f.age BETWEEN 18 AND 50""",(k,)).fetchall()
+            if couples and random.random() < min(.35, len(couples)/500):
+                couple = random.choice(couples)
+                sex = random.choice(["M","F"])
+                names = MALE if sex=="M" else FEMALE
+                name = f"{random.choice(names)} {int(time.time()*1000000)%1000000}"
+                c.execute("""INSERT INTO people
+                (name,sex,age,kingdom_id,job,wealth,status,alive,education,reputation,goal,fear,belief,mother_id,father_id,partner_id)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (name,sex,0,k,"niño",random.randint(1,10),"común",1,0,20,"familia","enfermedad","familia",
+                 couple["mother"],couple["father"],None))
+                child = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                c.execute("INSERT INTO relationships(a_id,b_id,kind,strength) VALUES(?,?,?,?)",(couple["mother"],child,"madre",90))
+                c.execute("INSERT INTO relationships(a_id,b_id,kind,strength) VALUES(?,?,?,?)",(couple["father"],child,"padre",90))
+                c.execute("INSERT INTO relationships(a_id,b_id,kind,strength) VALUES(?,?,?,?)",(child,couple["mother"],"hijo",90))
+                c.execute("INSERT INTO relationships(a_id,b_id,kind,strength) VALUES(?,?,?,?)",(child,couple["father"],"hijo",90))
+                add_event(c,wd,"Nace un nuevo habitante",
+                          "Una familia recibe a un nuevo hijo. El nacimiento cambia la vida y las obligaciones de quienes lo rodean.",2)
+
+        if random.random() < .18:
+            choices = [
+                ("Mercado en movimiento","Los precios y fortunas de algunos comerciantes cambiaron."),
+                ("Rumores entre familias","Circulan versiones distintas sobre un conflicto menor."),
+                ("Cosecha desigual","Algunas comunidades tuvieron una temporada mejor que otras."),
+                ("Viajeros en los caminos","Mercaderes y viajeros llevan noticias entre los reinos.")
             ]
-            t=random.choice(templates)
-            c.execute("INSERT INTO events(world_day,title,description,importance) VALUES(?,?,?,?)",(d,t[0],t[1],random.randint(1,3)))
-        c.execute("UPDATE world SET day=?, year=? WHERE id=1",(d,y))
-        w=c.execute("SELECT * FROM world WHERE id=1").fetchone()
+            t,d = random.choice(choices)
+            add_event(c,wd,t,d,random.randint(1,3))
+
+        c.execute("UPDATE world SET year=?,day=?,last_real=? WHERE id=1",(year,day,time.time()))
     c.commit(); c.close()
+
+def catch_up():
+    c = db()
+    w = c.execute("SELECT * FROM world WHERE id=1").fetchone()
+    c.close()
+    missed = min(int(max(0,time.time()-w["last_real"])/86400*3),90)
+    if missed and not w["paused"]:
+        tick(missed)
+
+async def background_loop():
+    while True:
+        try:
+            c=db(); w=c.execute("SELECT * FROM world WHERE id=1").fetchone(); c.close()
+            if not w["paused"]:
+                tick(max(1,w["speed"]))
+        except Exception:
+            pass
+        await asyncio.sleep(3600)
+
+@app.on_event("startup")
+async def startup():
+    init()
+    catch_up()
+    asyncio.create_task(background_loop())
+
+@app.get("/")
+def home():
+    return FileResponse(os.path.join(BASE,"index.html"))
+
+@app.get("/api/world")
+def get_world():
+    catch_up()
+    c=db()
+    w=dict(c.execute("SELECT * FROM world WHERE id=1").fetchone())
+    ks=[dict(x) for x in c.execute("SELECT * FROM kingdoms ORDER BY id")]
+    pop=c.execute("SELECT COUNT(*) FROM people WHERE alive=1").fetchone()[0]
+    nobles=c.execute("SELECT COUNT(*) FROM people WHERE alive=1 AND status='noble'").fetchone()[0]
+    families=c.execute("SELECT COUNT(*) FROM people WHERE alive=1 AND partner_id IS NOT NULL").fetchone()[0]//2
+    ev=[dict(x) for x in c.execute("SELECT * FROM events ORDER BY id DESC LIMIT 12")]
+    ppl=[dict(x) for x in c.execute("""SELECT id,name,age,job,wealth,status,kingdom_id,goal,reputation,
+        mother_id,father_id,partner_id FROM people WHERE alive=1 ORDER BY RANDOM() LIMIT 12""")]
+    c.close()
+    return {"world":w,"population":pop,"nobles":nobles,"families":families,"kingdoms":ks,"events":ev,"people":ppl}
 
 class Advance(BaseModel):
     days:int=1
-
 class Speed(BaseModel):
     speed:int
-
 class Pause(BaseModel):
     paused:bool
-
-@app.get("/")
-def home(): return FileResponse(os.path.join(BASE,"index.html"))
-
-@app.get("/api/world")
-def world():
-    c=db()
-    w=dict(c.execute("SELECT * FROM world WHERE id=1").fetchone())
-    ks=[dict(x) for x in c.execute("SELECT * FROM kingdoms").fetchall()]
-    ev=[dict(x) for x in c.execute("SELECT * FROM events ORDER BY id DESC LIMIT 20").fetchall()]
-    people=c.execute("SELECT COUNT(*) FROM people WHERE alive=1").fetchone()[0]
-    c.close()
-    return {"world":w,"kingdoms":ks,"population":people,"events":ev}
 
 @app.post("/api/advance")
 def advance(a:Advance):
     tick(max(1,min(a.days,3650)))
-    return world()
+    return get_world()
 
 @app.post("/api/speed")
 def speed(s:Speed):
     c=db(); c.execute("UPDATE world SET speed=? WHERE id=1",(max(1,min(s.speed,100)),)); c.commit(); c.close()
-    return world()
+    return get_world()
 
 @app.post("/api/pause")
 def pause(p:Pause):
     c=db(); c.execute("UPDATE world SET paused=? WHERE id=1",(1 if p.paused else 0,)); c.commit(); c.close()
-    return world()
+    return get_world()
 
 @app.post("/api/divine/wealth/{kingdom_id}")
 def divine_wealth(kingdom_id:int):
-    c=db(); c.execute("UPDATE kingdoms SET gold=gold+10000 WHERE id=?",(kingdom_id,))
-    c.execute("INSERT INTO events(world_day,title,description,importance) SELECT day,'Intervención del Creador','Una cantidad extraordinaria de riqueza apareció en las arcas del reino.',4 FROM world WHERE id=1")
-    c.commit(); c.close(); return world()
-
-init()
+    c=db()
+    c.execute("UPDATE kingdoms SET gold=gold+10000 WHERE id=?",(kingdom_id,))
+    w=c.execute("SELECT year,day FROM world WHERE id=1").fetchone()
+    add_event(c,world_day(w),"Intervención divina","Una riqueza inesperada apareció en las arcas del reino.",4)
+    c.commit(); c.close()
+    return get_world()
