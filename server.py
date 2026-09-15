@@ -7,7 +7,7 @@ SIM_LOCK = threading.Lock()
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.path.join(BASE, "world.db")
-app = FastAPI(title="Reino Vivo v0.5")
+app = FastAPI(title="Reino Vivo v0.6")
 
 MALE = ["Aren","Bran","Corvin","Edric","Garen","Hugo","Ivar","Jon","Kael","Lucan","Marek","Nolan","Oren","Perrin","Ronan","Tomas"]
 FEMALE = ["Aelia","Brina","Celia","Fiona","Gwen","Isla","Lena","Mara","Neria","Olia","Rhea","Selene","Talia","Una","Vera","Yara"]
@@ -38,6 +38,15 @@ def init():
     CREATE TABLE IF NOT EXISTS knowledge(
         id INTEGER PRIMARY KEY AUTOINCREMENT, person_id INTEGER, subject TEXT, content TEXT,
         certainty INTEGER, source TEXT
+    );
+    CREATE TABLE IF NOT EXISTS parties(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, kingdom_id INTEGER, name TEXT, ideology TEXT, influence INTEGER, support INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS party_members(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, party_id INTEGER, person_id INTEGER, role TEXT, loyalty INTEGER, UNIQUE(party_id,person_id)
+    );
+    CREATE TABLE IF NOT EXISTS offices(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, kingdom_id INTEGER, title TEXT, person_id INTEGER, power INTEGER
     );
     CREATE TABLE IF NOT EXISTS events(
         id INTEGER PRIMARY KEY AUTOINCREMENT, world_day INTEGER, title TEXT, description TEXT, importance INTEGER
@@ -81,8 +90,28 @@ def init():
         for r in c.execute("SELECT id,name,kingdom_id FROM people WHERE alive=1 ORDER BY id LIMIT 120").fetchall():
             c.execute("INSERT INTO knowledge(person_id,subject,content,certainty,source) VALUES(?,?,?,?,?)",
                       (r["id"],"mundo","Vive en " + ("Aurelia" if r["kingdom_id"]==1 else "Valdoria"),100,"experiencia"))
+        # Initial political parties and noble offices. Parties are autonomous factions, not fixed good/bad labels.
+        party_defs = {
+            1: [("Tradición Real","tradicionalista"),("Reformistas de la Corona","reformista"),("Liga Mercantil","mercantil")],
+            2: [("Orden del Reino","tradicionalista"),("Consejo de Renovación","reformista"),("Alianza de Comerciantes","mercantil")]
+        }
+        for k, defs in party_defs.items():
+            nobles=[r["id"] for r in c.execute("SELECT id FROM people WHERE kingdom_id=? AND status='noble' AND alive=1",(k,)).fetchall()]
+            random.shuffle(nobles)
+            for name, ideology in defs:
+                c.execute("INSERT INTO parties(kingdom_id,name,ideology,influence,support) VALUES(?,?,?,?,?)",(k,name,ideology,random.randint(20,45),random.randint(15,40)))
+                party_id=c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                take=random.randint(4,9)
+                for nid in nobles[:take]:
+                    c.execute("INSERT OR IGNORE INTO party_members(party_id,person_id,role,loyalty) VALUES(?,?,?,?)",(party_id,nid,"miembro",random.randint(45,90)))
+                nobles=nobles[take:] if len(nobles)>take else nobles
+        for k in (1,2):
+            nobles=[r["id"] for r in c.execute("SELECT id FROM people WHERE kingdom_id=? AND status='noble' AND alive=1 ORDER BY RANDOM()",(k,)).fetchall()]
+            titles=[("Consejero Real",40),("Maestre de Finanzas",35),("Maestre de Leyes",30),("Comandante de la Guardia",35)]
+            for (title,power),nid in zip(titles,nobles):
+                c.execute("INSERT INTO offices(kingdom_id,title,person_id,power) VALUES(?,?,?,?)",(k,title,nid,power))
         c.execute("INSERT INTO events(world_day,title,description,importance) VALUES(1,?,?,?)",
-                  ("Nacimiento del Reino Vivo","Dos reinos comienzan una nueva era con 2.000 habitantes. Algunas familias ya tienen vínculos entre sí.",5))
+                  ("Nacimiento del Reino Vivo","Dos reinos comienzan una nueva era con 2.000 habitantes. Algunas familias ya tienen vínculos entre sí y los nobles empiezan a organizarse en facciones políticas.",5))
     c.commit(); c.close()
 
 def world_day(w):
@@ -91,6 +120,29 @@ def world_day(w):
 def add_event(c, wd, title, desc, importance):
     c.execute("INSERT INTO events(world_day,title,description,importance) VALUES(?,?,?,?)",
               (wd,title,desc,importance))
+
+def political_tick(c, wd):
+    # Parties gain/lose support from autonomous social and economic conditions.
+    for party in c.execute("SELECT * FROM parties").fetchall():
+        change=random.randint(-2,3)
+        if party["ideology"]=="mercantil" and random.random()<0.35: change+=1
+        if party["ideology"]=="reformista" and random.random()<0.20: change+=1
+        support=max(0,min(100,party["support"]+change))
+        influence=max(5,min(100,party["influence"]+random.randint(-2,2)))
+        c.execute("UPDATE parties SET support=?,influence=? WHERE id=?",(support,influence,party["id"]))
+    if random.random()<0.12:
+        p=c.execute("SELECT p.*,k.name kingdom FROM parties p JOIN kingdoms k ON k.id=p.kingdom_id ORDER BY RANDOM() LIMIT 1").fetchone()
+        if p:
+            titles=["Debate entre nobles","Disputa por impuestos","Coalición en formación","Presión de una facción","Negociación del consejo"]
+            desc=f"En {p['kingdom']}, la facción {p['name']} ganó protagonismo. Sus miembros negocian, discrepan y buscan apoyo entre otros nobles."
+            add_event(c,wd,random.choice(titles),desc,random.randint(2,4))
+    # Noble loyalty drifts; a very low loyalty can move a noble to another faction.
+    for m in c.execute("SELECT * FROM party_members").fetchall():
+        loyalty=max(10,min(100,m["loyalty"]+random.randint(-3,3)))
+        c.execute("UPDATE party_members SET loyalty=? WHERE id=?",(loyalty,m["id"]))
+        if loyalty<25 and random.random()<0.08:
+            c.execute("DELETE FROM party_members WHERE id=?",(m["id"],))
+            add_event(c,wd,"Un noble cambia de bando","Un miembro de la nobleza abandonó una facción política y comenzó a buscar nuevos aliados.",3)
 
 def _tick_unlocked(days=1):
     c = db()
@@ -213,10 +265,12 @@ def get_world():
     nobles=c.execute("SELECT COUNT(*) FROM people WHERE alive=1 AND status='noble'").fetchone()[0]
     families=c.execute("SELECT COUNT(*) FROM people WHERE alive=1 AND partner_id IS NOT NULL").fetchone()[0]//2
     ev=[dict(x) for x in c.execute("SELECT * FROM events ORDER BY id DESC LIMIT 12")]
+    parties=[dict(x) for x in c.execute("SELECT p.*,k.name AS kingdom FROM parties p JOIN kingdoms k ON k.id=p.kingdom_id ORDER BY k.id,p.influence DESC")]
+    offices=[dict(x) for x in c.execute("SELECT o.*,p.name AS person_name,k.name AS kingdom FROM offices o JOIN people p ON p.id=o.person_id JOIN kingdoms k ON k.id=o.kingdom_id ORDER BY k.id,o.power DESC")]
     ppl=[dict(x) for x in c.execute("""SELECT id,name,age,job,wealth,status,kingdom_id,goal,reputation,
         mother_id,father_id,partner_id FROM people WHERE alive=1 ORDER BY RANDOM() LIMIT 12""")]
     c.close()
-    return {"world":w,"population":pop,"nobles":nobles,"families":families,"kingdoms":ks,"events":ev,"people":ppl}
+    return {"world":w,"population":pop,"nobles":nobles,"families":families,"kingdoms":ks,"parties":parties,"offices":offices,"events":ev,"people":ppl}
 
 class Advance(BaseModel):
     days:int=1

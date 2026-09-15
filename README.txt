@@ -1,7 +1,5 @@
-REINO VIVO v0.5
+REINO VIVO v0.6
 
-Prototipo del mundo autónomo.
+Etapa de vida social y política. Incluye NPC individuales, familias y relaciones básicas, conocimiento inicial, partidos políticos autónomos, apoyo e influencia de facciones, cargos de poder ocupados por nobles y cambios políticos emergentes.
 
-Corrige el error que podía detener el avance al procesar nacimientos y añade protección contra escrituras simultáneas en SQLite. Incluye población individual, parejas, padres/hijos, relaciones básicas, conocimiento inicial, economía simple, eventos, avance temporal, pausa y recuperación limitada del tiempo transcurrido.
-
-IMPORTANTE: sigue siendo un prototipo. La versión final necesitará PostgreSQL, un trabajador persistente, copias de seguridad, autenticación y un motor de simulación mucho más profundo.
+Los partidos son facciones del mundo, no una valoración del juego. Esta sigue siendo una versión prototipo; la arquitectura final requerirá PostgreSQL, procesos persistentes, seguridad y sistemas sociales/económicos mucho más profundos.
