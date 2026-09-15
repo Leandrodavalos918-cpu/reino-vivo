@@ -57,7 +57,7 @@ def init():
                 status = "noble" if i < 20 else ("real" if i < 25 else "común")
                 c.execute("""INSERT INTO people
                 (id,name,sex,age,kingdom_id,job,wealth,status,alive,education,reputation,goal,fear,belief,mother_id,father_id,partner_id)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (pid,f"{random.choice(names)} {pid}",sex,age,k,job,wealth,status,1,
                  random.randint(0,100),random.randint(0,100),random.choice(GOALS),
                  random.choice(FEARS),random.choice(BELIEFS),None,None,None))
@@ -144,7 +144,7 @@ def tick(days=1):
                 name = f"{random.choice(names)} {int(time.time()*1000000)%1000000}"
                 c.execute("""INSERT INTO people
                 (name,sex,age,kingdom_id,job,wealth,status,alive,education,reputation,goal,fear,belief,mother_id,father_id,partner_id)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (name,sex,0,k,"niño",random.randint(1,10),"común",1,0,20,"familia","enfermedad","familia",
                  couple["mother"],couple["father"],None))
                 child = c.execute("SELECT last_insert_rowid()").fetchone()[0]
