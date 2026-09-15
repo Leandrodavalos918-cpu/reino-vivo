@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reino Vivo v0.2</title>
+<style>
+body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#101318;color:#eee}
+header{padding:18px 20px;background:#181d25;position:sticky;top:0;border-bottom:1px solid #303744}
+h1{margin:0 0 5px;font-size:25px}.muted{color:#9ba5b4}
+main{padding:18px;max-width:1100px;margin:auto}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.card{background:#181d25;border:1px solid #303744;border-radius:14px;padding:16px}.big{font-size:30px;font-weight:800}
+button{border:0;border-radius:10px;padding:11px 14px;margin:4px;background:#e9edf3;color:#111;font-weight:700}
+button.dark{background:#303744;color:#fff}.event{padding:10px 0;border-bottom:1px solid #303744}.gold{font-weight:700}
+</style></head>
+<body><header><h1>🌍 Reino Vivo</h1><div class="muted">Tu universo autónomo — v0.2</div></header>
+<main>
+<div class="grid">
+<div class="card"><div class="muted">Tiempo del mundo</div><div id="time" class="big">...</div><div id="state" class="muted"></div></div>
+<div class="card"><div class="muted">Población</div><div id="pop" class="big">...</div><div class="muted">Humanos vivos</div></div>
+</div>
+<h2>👑 Reinos</h2><div id="kingdoms" class="grid"></div>
+<h2>⏱️ Control del Creador</h2><div class="card">
+<button onclick="advance(1)">Avanzar 1 día</button><button onclick="advance(7)">1 semana</button><button onclick="advance(30)">1 mes</button>
+<button class="dark" onclick="togglePause()">Pausa / Continuar</button>
+<button class="dark" onclick="wealth(1)">Dar riqueza a Aurelia</button>
+</div>
+<h2>📰 Crónica</h2><div class="card" id="events"></div>
+</main>
+<script>
+let data;
+async function load(){data=await (await fetch('/api/world')).json(); render()}
+function render(){
+let w=data.world; document.getElementById('time').textContent=`Año ${w.year}, día ${w.day}`;
+document.getElementById('state').textContent=w.paused?'⏸️ Mundo pausado':'▶️ Mundo activo';
+document.getElementById('pop').textContent=data.population.toLocaleString('es-PY');
+document.getElementById('kingdoms').innerHTML=data.kingdoms.map(k=>`<div class="card"><h3>👑 ${k.name}</h3><div>${k.ruler_title}: <b>${k.ruler}</b></div><p>👥 ${k.population.toLocaleString('es-PY')} habitantes</p><p>💰 <span class="gold">${Math.round(k.gold).toLocaleString('es-PY')} oro</span></p><p>Estabilidad: ${k.stability}%</p></div>`).join('');
+document.getElementById('events').innerHTML=data.events.map(e=>`<div class="event"><b>${e.title}</b><div class="muted">${e.description}</div></div>`).join('');
+}
+async function post(url,body={}){await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});load()}
+function advance(days){post('/api/advance',{days})}
+function togglePause(){post('/api/pause',{paused:!data.world.paused})}
+function wealth(k){post('/api/divine/wealth/'+k)}
+load(); setInterval(load,5000);
+</script></body></html>
