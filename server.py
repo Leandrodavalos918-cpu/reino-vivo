@@ -103,7 +103,7 @@ class Pause(BaseModel):
     paused:bool
 
 @app.get("/")
-def home(): return FileResponse(os.path.join(BASE,"web","index.html"))
+def home(): return FileResponse(os.path.join(BASE,"index.html"))
 
 @app.get("/api/world")
 def world():
