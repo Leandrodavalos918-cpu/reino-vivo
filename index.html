@@ -1,39 +1,27 @@
-<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Reino Vivo v0.5</title>
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reino Vivo v0.7</title>
 <style>
-body{margin:0;background:#0d1117;color:#eef2f7;font-family:system-ui,sans-serif}main{max-width:1100px;margin:auto;padding:20px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}.card{background:#171d26;border:1px solid #303947;border-radius:16px;padding:16px;margin:10px 0}
-.big{font-size:34px;font-weight:800}.muted{color:#9da8b8}button{background:#263142;color:white;border:1px solid #435066;border-radius:11px;padding:10px 13px;margin:3px;font-weight:700}
-.pill{display:inline-block;background:#243044;border-radius:18px;padding:4px 8px;margin:3px;font-size:12px}
+body{margin:0;background:#0b1017;color:#edf2f7;font-family:system-ui,-apple-system,sans-serif}main{max-width:1180px;margin:auto;padding:18px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:12px}.card{background:#151c25;border:1px solid #303b4a;border-radius:16px;padding:15px;margin:9px 0}.big{font-size:32px;font-weight:850}.muted{color:#9eabbc}.pill{display:inline-block;background:#243043;border-radius:18px;padding:4px 8px;margin:3px;font-size:12px}.bar{height:7px;background:#273241;border-radius:10px;overflow:hidden;margin:6px 0 10px}.fill{height:100%;background:#91a8c3}.row{display:flex;justify-content:space-between;gap:8px}.tabs button,button{background:#253142;color:white;border:1px solid #435166;border-radius:10px;padding:9px 12px;margin:3px;font-weight:700}.event{border-left:3px solid #7087a0}.small{font-size:13px}.modal{position:fixed;inset:0;background:#0009;display:none;align-items:center;justify-content:center;padding:15px}.modalbox{max-width:720px;width:100%;max-height:88vh;overflow:auto;background:#131a23;border:1px solid #465367;border-radius:18px;padding:18px}.close{float:right}.danger{color:#f3b0b0}
 </style></head><body><main>
-<h1>🌍 Reino Vivo</h1><div class="muted">Universo autónomo · v0.5</div>
-<div class="card"><div class="muted">Tiempo del mundo</div><div id="time" class="big">Cargando...</div><div id="state"></div>
-<button onclick="advance(1)">+1 día</button><button onclick="advance(7)">+1 semana</button><button onclick="advance(30)">+1 mes</button><button onclick="advance(365)">+1 año</button>
-<button onclick="togglePause()" id="pause">Pausa</button></div>
-<div class="grid"><div class="card"><div class="muted">Población viva</div><div id="pop" class="big">-</div></div>
-<div class="card"><div class="muted">Nobles vivos</div><div id="nobles" class="big">-</div></div>
-<div class="card"><div class="muted">Parejas registradas</div><div id="families" class="big">-</div></div></div>
+<div class="top"><div><h1>🌍 Reino Vivo</h1><div class="muted">Universo autónomo · v0.7 · simulación + consecuencias</div></div><div class="small">🧠 Núcleo de decisiones activo</div></div>
+<div class="card"><div class="muted">Tiempo del mundo</div><div id="time" class="big">Cargando...</div><div id="state"></div><div><button onclick="advance(1)">+1 día</button><button onclick="advance(7)">+1 semana</button><button onclick="advance(30)">+1 mes</button><button onclick="advance(365)">+1 año</button><button onclick="togglePause()" id="pause">Pausa</button></div></div>
+<div class="grid"><div class="card"><div class="muted">Población viva</div><div id="pop" class="big">-</div></div><div class="card"><div class="muted">Nobles vivos</div><div id="nobles" class="big">-</div></div><div class="card"><div class="muted">Familias con pareja</div><div id="families" class="big">-</div></div><div class="card"><div class="muted">Salud media</div><div id="health" class="big">-</div></div><div class="card"><div class="muted">Riqueza media</div><div id="wealth" class="big">-</div></div></div>
 <h2>👑 Reinos</h2><div id="kingdoms" class="grid"></div>
-<h2>🏛️ Política</h2><div id="politics" class="grid"></div><h2>⚖️ Cargos de poder</h2><div id="offices" class="grid"></div>
-<h2>👥 Habitantes</h2><div id="people" class="grid"></div>
+<h2>🏛️ Política</h2><div id="politics" class="grid"></div><h2>⚖️ Cargos</h2><div id="offices" class="grid"></div>
+<h2>👥 Personas vivas</h2><div class="muted">Estas son muestras del mundo. Tocá una persona para inspeccionar su vida, relaciones, conocimientos y acontecimientos.</div><div id="people" class="grid"></div>
 <h2>📰 Crónica reciente</h2><div id="events"></div>
-</main><script>
+</main>
+<div id="modal" class="modal" onclick="if(event.target.id==='modal')closeModal()"><div class="modalbox"><button class="close" onclick="closeModal()">✕</button><div id="detail">Cargando...</div></div></div>
+<script>
 let paused=false;
-async function api(u,o={}){let r=await fetch(u,{headers:{'Content-Type':'application/json'},...o});return r.json()}
-async function load(){let d=await api('/api/world');paused=!!d.world.paused;
-document.querySelector('#time').textContent=`Año ${d.world.year}, día ${d.world.day}`;
-document.querySelector('#state').textContent=paused?'⏸️ Mundo pausado':'▶️ Mundo activo';
-document.querySelector('#pause').textContent=paused?'Reanudar':'Pausa';
-document.querySelector('#pop').textContent=d.population.toLocaleString('es-PY');
-document.querySelector('#nobles').textContent=d.nobles;
-document.querySelector('#families').textContent=d.families;
-document.querySelector('#kingdoms').innerHTML=d.kingdoms.map(k=>`<div class="card"><h3>👑 ${k.name}</h3><p>${k.ruler_title}: <b>${k.ruler}</b></p><p>💰 ${k.gold.toLocaleString('es-PY')} oro</p><p>Estabilidad: ${k.stability}%</p></div>`).join('');
-document.querySelector('#politics').innerHTML=d.parties.map(p=>`<div class="card"><h3>🏛️ ${p.name}</h3><p>${p.kingdom}</p><p>Corriente: ${p.ideology}</p><p>Influencia: <b>${p.influence}</b> · Apoyo: <b>${p.support}%</b></p></div>`).join('');
-document.querySelector('#offices').innerHTML=d.offices.map(o=>`<div class="card"><h3>⚖️ ${o.title}</h3><p>${o.person_name} · ${o.kingdom}</p><p>Poder del cargo: ${o.power}</p></div>`).join('');
-document.querySelector('#people').innerHTML=d.people.map(p=>`<div class="card"><h3>${p.name}</h3><p>${p.age} años · ${p.job}</p><p>💰 ${p.wealth} oro · ${p.status}</p><span class="pill">🎯 ${p.goal}</span><span class="pill">⭐ ${p.reputation}</span><p class="muted">Familia: ${p.mother_id||p.father_id||p.partner_id?'sí':'sin vínculos registrados'}</p></div>`).join('');
-document.querySelector('#events').innerHTML=d.events.map(e=>`<div class="card"><b>${e.title}</b><div class="muted">Día ${e.world_day}</div><p>${e.description}</p></div>`).join('')}
-async function advance(days){if(paused)return;await api('/api/advance',{method:'POST',body:JSON.stringify({days})});load()}
-async function togglePause(){paused=!paused;await api('/api/pause',{method:'POST',body:JSON.stringify({paused})});load()}
-load();setInterval(load,15000)
+async function api(u,o={}){let r=await fetch(u,{headers:{'Content-Type':'application/json'},...o});if(!r.ok)throw new Error(await r.text());return r.json()}
+function bar(v){return `<div class="bar"><div class="fill" style="width:${Math.max(0,Math.min(100,v))}%"></div></div>`}
+async function load(){try{let d=await api('/api/world');paused=!!d.world.paused;document.querySelector('#time').textContent=`Año ${d.world.year}, día ${d.world.day}`;document.querySelector('#state').textContent=paused?'⏸️ Mundo pausado':'▶️ Mundo activo';document.querySelector('#pause').textContent=paused?'Reanudar':'Pausa';document.querySelector('#pop').textContent=d.population.toLocaleString('es-PY');document.querySelector('#nobles').textContent=d.nobles;document.querySelector('#families').textContent=d.families;document.querySelector('#health').textContent=d.avg_health+'%';document.querySelector('#wealth').textContent=d.avg_wealth.toLocaleString('es-PY')+' oro';
+document.querySelector('#kingdoms').innerHTML=d.kingdoms.map(k=>`<div class="card"><h3>👑 ${k.name}</h3><p>${k.ruler_title}: <b>${k.ruler}</b></p><p>💰 ${k.gold.toLocaleString('es-PY')} oro</p><p>Estabilidad: <b>${k.stability}%</b></p>${bar(k.stability)}</div>`).join('');
+document.querySelector('#politics').innerHTML=d.parties.map(p=>`<div class="card"><h3>🏛️ ${p.name}</h3><p>${p.kingdom}</p><span class="pill">${p.ideology}</span><p>Influencia: <b>${p.influence}</b> · Apoyo: <b>${p.support}%</b></p>${bar(p.support)}</div>`).join('');
+document.querySelector('#offices').innerHTML=d.offices.map(o=>`<div class="card"><h3>⚖️ ${o.title}</h3><p>${o.person_name} · ${o.kingdom}</p><p>Poder: ${o.power}</p></div>`).join('');
+document.querySelector('#people').innerHTML=d.people.map(p=>`<div class="card" onclick="person(${p.id})"><h3>${p.name}</h3><p>${p.age} años · ${p.job}</p><p>💰 ${p.wealth} oro · ${p.status}</p><span class="pill">🎯 ${p.goal}</span><span class="pill">🧠 ${p.trait}</span><p class="small">🍖 Hambre ${p.hunger}% · 😴 Energía ${p.energy}% · ❤️ Social ${p.social}%</p>${bar(p.health)}<p class="muted small">Última acción: ${p.last_action}</p></div>`).join('');
+document.querySelector('#events').innerHTML=d.events.map(e=>`<div class="card event"><b>${e.title}</b><div class="muted small">Día ${e.world_day}${e.location?' · '+e.location:''}</div><p>${e.description}</p>${e.cause?`<div class="small muted">Causa registrada: ${e.cause}</div>`:''}</div>`).join('');}catch(e){document.querySelector('#state').textContent='⚠️ Error al cargar el mundo';console.error(e)}}
+async function advance(days){if(paused)return;await api('/api/advance',{method:'POST',body:JSON.stringify({days})});load()}async function togglePause(){paused=!paused;await api('/api/pause',{method:'POST',body:JSON.stringify({paused})});load()}
+async function person(id){document.querySelector('#modal').style.display='flex';document.querySelector('#detail').textContent='Cargando...';try{let d=await api('/api/people/'+id),p=d.person;document.querySelector('#detail').innerHTML=`<h2>👤 ${p.name}</h2><p>${p.age} años · ${p.job} · ${p.status}</p><div class="grid"><div class="card">💰 Riqueza<br><b>${p.wealth}</b></div><div class="card">🎯 Objetivo<br><b>${p.goal}</b></div><div class="card">🧠 Personalidad<br><b>${p.trait}</b>, ${p.secondary_trait}</div><div class="card">❤️ Salud<br><b>${p.health}%</b></div></div><p>🍖 Hambre ${p.hunger}% · 😴 Energía ${p.energy}% · ❤️ Vida social ${p.social}% · 🛡️ Seguridad ${p.security}%</p><h3>❤️ Relaciones</h3>${d.relationships.length?d.relationships.map(r=>`<div class="card"><b>${r.other_name}</b> · ${r.kind} · fuerza ${r.strength}</div>`).join(''):'<p class="muted">Todavía no hay relaciones registradas.</p>'}<h3>🧠 Lo que sabe</h3>${d.knowledge.length?d.knowledge.map(k=>`<div class="card"><b>${k.subject}</b><p>${k.content}</p><span class="muted">Certeza: ${k.certainty}% · fuente: ${k.source}</span></div>`).join(''):'<p class="muted">No tiene información especial registrada.</p>'}<h3>📜 Acontecimientos</h3>${d.history.length?d.history.map(e=>`<div class="card event"><b>${e.title}</b><p>${e.description}</p></div>`).join(''):'<p class="muted">Su historia todavía no contiene acontecimientos destacados.</p>'}`}catch(e){document.querySelector('#detail').textContent='No se pudo cargar este habitante.'}}
+function closeModal(){document.querySelector('#modal').style.display='none'}load();setInterval(load,15000);
 </script></body></html>

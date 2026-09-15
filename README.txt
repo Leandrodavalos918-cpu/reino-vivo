@@ -1,5 +1,18 @@
-REINO VIVO v0.6
+REINO VIVO v0.7
 
-Etapa de vida social y política. Incluye NPC individuales, familias y relaciones básicas, conocimiento inicial, partidos políticos autónomos, apoyo e influencia de facciones, cargos de poder ocupados por nobles y cambios políticos emergentes.
+Versión de profundización del núcleo de vida.
 
-Los partidos son facciones del mundo, no una valoración del juego. Esta sigue siendo una versión prototipo; la arquitectura final requerirá PostgreSQL, procesos persistentes, seguridad y sistemas sociales/económicos mucho más profundos.
+Incluye:
+- NPCs con necesidades, personalidad, objetivos, rutinas y acciones.
+- Economía personal básica: ingresos, gastos, riqueza y decisiones.
+- Relaciones dinámicas y red social básica.
+- Memoria y conocimiento individual con rumores y certeza limitada.
+- Nacimientos y muertes con consecuencias familiares.
+- Eventos emergentes basados en el estado del mundo.
+- Causalidad registrada para acontecimientos.
+- Narración contextual más rica.
+- Inspección de habitantes, relaciones, conocimiento e historia.
+- Conserva los sistemas políticos y familiares de v0.6.
+- Migración automática de la base SQLite existente de v0.6.
+
+IMPORTANTE: no subir world.db al repositorio. La base de datos debe permanecer en el entorno donde ya está funcionando el mundo.
