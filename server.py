@@ -1,11 +1,13 @@
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-import sqlite3, random, os, time, asyncio
+import sqlite3, random, os, time, asyncio, threading
+
+SIM_LOCK = threading.Lock()
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.path.join(BASE, "world.db")
-app = FastAPI(title="Reino Vivo v0.4")
+app = FastAPI(title="Reino Vivo v0.5")
 
 MALE = ["Aren","Bran","Corvin","Edric","Garen","Hugo","Ivar","Jon","Kael","Lucan","Marek","Nolan","Oren","Perrin","Ronan","Tomas"]
 FEMALE = ["Aelia","Brina","Celia","Fiona","Gwen","Isla","Lena","Mara","Neria","Olia","Rhea","Selene","Talia","Una","Vera","Yara"]
@@ -57,7 +59,7 @@ def init():
                 status = "noble" if i < 20 else ("real" if i < 25 else "común")
                 c.execute("""INSERT INTO people
                 (id,name,sex,age,kingdom_id,job,wealth,status,alive,education,reputation,goal,fear,belief,mother_id,father_id,partner_id)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (pid,f"{random.choice(names)} {pid}",sex,age,k,job,wealth,status,1,
                  random.randint(0,100),random.randint(0,100),random.choice(GOALS),
                  random.choice(FEARS),random.choice(BELIEFS),None,None,None))
@@ -90,7 +92,7 @@ def add_event(c, wd, title, desc, importance):
     c.execute("INSERT INTO events(world_day,title,description,importance) VALUES(?,?,?,?)",
               (wd,title,desc,importance))
 
-def tick(days=1):
+def _tick_unlocked(days=1):
     c = db()
     for _ in range(days):
         w = c.execute("SELECT * FROM world WHERE id=1").fetchone()
@@ -168,13 +170,18 @@ def tick(days=1):
         c.execute("UPDATE world SET year=?,day=?,last_real=? WHERE id=1",(year,day,time.time()))
     c.commit(); c.close()
 
+def tick(days=1):
+    with SIM_LOCK:
+        _tick_unlocked(max(1, int(days)))
+
 def catch_up():
-    c = db()
-    w = c.execute("SELECT * FROM world WHERE id=1").fetchone()
-    c.close()
-    missed = min(int(max(0,time.time()-w["last_real"])/86400*3),90)
-    if missed and not w["paused"]:
-        tick(missed)
+    with SIM_LOCK:
+        c = db()
+        w = c.execute("SELECT * FROM world WHERE id=1").fetchone()
+        c.close()
+        missed = min(int(max(0,time.time()-w["last_real"])/86400*3),90)
+        if missed and not w["paused"]:
+            _tick_unlocked(missed)
 
 async def background_loop():
     while True:
