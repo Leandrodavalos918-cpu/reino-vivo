@@ -1,9 +1,5 @@
-REINO VIVO v0.8
-Capa física del mundo: geografía, territorios, ciudades, barrios, propiedades, recursos y rutas.
+REINO VIVO v0.9
 
-Instalación local/Render: mantener los mismos archivos y comando de la versión anterior.
-Esta versión migra una base v0.7 existente sin borrar world.db. Si no existe base, crea el mundo inicial.
-
-Endpoints nuevos:
-GET /api/layers
-GET /api/cities/{city_id}
+Economía, comercio y movimiento sobre la arquitectura física de v0.8.
+Incluye mercados con oferta/demanda/precios, negocios, producción/consumo, envíos entre ciudades y una capa de economía visible.
+Conserva el mundo existente: no incluye world.db.

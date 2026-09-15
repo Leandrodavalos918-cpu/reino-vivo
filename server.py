@@ -6,7 +6,7 @@ import sqlite3, random, os, time, asyncio, threading, math
 SIM_LOCK = threading.Lock()
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.path.join(BASE, "world.db")
-app = FastAPI(title="Reino Vivo v0.8")
+app = FastAPI(title="Reino Vivo v0.9")
 
 MALE = ["Aren","Bran","Corvin","Edric","Garen","Hugo","Ivar","Jon","Kael","Lucan","Marek","Nolan","Oren","Perrin","Ronan","Tomas","Dario","León","Mateo","Silas"]
 FEMALE = ["Aelia","Brina","Celia","Fiona","Gwen","Isla","Lena","Mara","Neria","Olia","Rhea","Selene","Talia","Una","Vera","Yara","Elia","Nora","Livia","Mira"]
@@ -57,6 +57,10 @@ def init():
     CREATE TABLE IF NOT EXISTS resources(id INTEGER PRIMARY KEY AUTOINCREMENT, region_id INTEGER, resource_type TEXT, quantity INTEGER, quality INTEGER, extraction INTEGER);
     CREATE TABLE IF NOT EXISTS routes(id INTEGER PRIMARY KEY AUTOINCREMENT, from_city_id INTEGER, to_city_id INTEGER, route_type TEXT, distance INTEGER, safety INTEGER, capacity INTEGER, condition INTEGER);
     CREATE TABLE IF NOT EXISTS conflicts(id INTEGER PRIMARY KEY AUTOINCREMENT, world_day INTEGER, kingdom_id INTEGER, type TEXT, title TEXT, status TEXT, intensity INTEGER, location TEXT, parties TEXT, cause TEXT, description TEXT);
+    CREATE TABLE IF NOT EXISTS markets(id INTEGER PRIMARY KEY AUTOINCREMENT, city_id INTEGER, good TEXT, stock INTEGER, demand INTEGER, base_price INTEGER, price INTEGER, last_change INTEGER DEFAULT 0, UNIQUE(city_id,good));
+    CREATE TABLE IF NOT EXISTS businesses(id INTEGER PRIMARY KEY AUTOINCREMENT, city_id INTEGER, owner_id INTEGER, name TEXT, business_type TEXT, capital INTEGER, workers INTEGER, stock INTEGER, revenue INTEGER, expenses INTEGER, active INTEGER DEFAULT 1);
+    CREATE TABLE IF NOT EXISTS shipments(id INTEGER PRIMARY KEY AUTOINCREMENT, route_id INTEGER, good TEXT, quantity INTEGER, origin_city INTEGER, destination_city INTEGER, status TEXT, days_left INTEGER, price_paid INTEGER, owner_id INTEGER, created_day INTEGER);
+    CREATE TABLE IF NOT EXISTS loans(id INTEGER PRIMARY KEY AUTOINCREMENT, borrower_id INTEGER, lender_id INTEGER, principal INTEGER, remaining INTEGER, interest INTEGER, status TEXT, created_day INTEGER);
     """)
     # v0.7 additions. Safe on an existing v0.6 database.
     additions = [
@@ -101,6 +105,7 @@ def init():
             c.execute("UPDATE people SET hunger=COALESCE(hunger,30), energy=COALESCE(energy,70), social=COALESCE(social,55), security=COALESCE(security,70), health=COALESCE(health,90), morale=COALESCE(morale,65)")
             c.execute("UPDATE people SET trait=COALESCE(NULLIF(trait,''),?), secondary_trait=COALESCE(NULLIF(secondary_trait,''),?), monthly_income=CASE WHEN monthly_income IS NULL OR monthly_income=0 THEN CASE WHEN age>=15 THEN 25 ELSE 0 END ELSE monthly_income END, monthly_expense=CASE WHEN monthly_expense IS NULL OR monthly_expense=0 THEN CASE WHEN age>=15 THEN 12 ELSE 3 END ELSE monthly_expense END, home_quality=COALESCE(home_quality,50), routine=COALESCE(NULLIF(routine,''),job)" ,(random.choice(TRAITS),random.choice(TRAITS)))
     ensure_physical_world(c)
+    ensure_economy(c)
     c.commit(); c.close()
 
 
@@ -195,6 +200,90 @@ def seed_politics(c):
             for (title,power),nid in zip([("Consejero Real",40),("Maestre de Finanzas",35),("Maestre de Leyes",30),("Comandante de la Guardia",35)],nobles):
                 c.execute("INSERT INTO offices(kingdom_id,title,person_id,power) VALUES(?,?,?,?)",(k,title,nid,power))
 
+
+GOOD_BASE={"trigo":10,"madera":14,"pescado":12,"hierro":22,"piedra":8,"sal":16,"metal":32,"comercio":18,"servicios":15}
+
+def ensure_economy(c):
+    # Seed market ledgers without resetting an existing world.
+    if c.execute("SELECT COUNT(*) FROM markets").fetchone()[0]==0:
+        for city in c.execute("SELECT id FROM cities ORDER BY id").fetchall():
+            cid=city[0]
+            goods=["trigo","madera","pescado","hierro","piedra","sal"]
+            for g in goods:
+                stock=random.randint(90,260); demand=random.randint(80,240); base=GOOD_BASE[g]
+                price=max(1,round(base*(1+demand/max(stock,1)*0.45)))
+                c.execute("INSERT OR IGNORE INTO markets(city_id,good,stock,demand,base_price,price,last_change) VALUES(?,?,?,?,?,?,?)",(cid,g,stock,demand,base,price,0))
+    if c.execute("SELECT COUNT(*) FROM businesses").fetchone()[0]==0:
+        for city in c.execute("SELECT id,kingdom_id,name FROM cities").fetchall():
+            cid,kid,name=city
+            owners=c.execute("SELECT id FROM people WHERE alive=1 AND kingdom_id=? AND age>=18 ORDER BY RANDOM() LIMIT 6",(kid,)).fetchall()
+            for i,o in enumerate(owners[:4]):
+                typ=random.choice(["panadería","taller","tienda","granja","carpintería","pesquería"])
+                c.execute("INSERT INTO businesses(city_id,owner_id,name,business_type,capital,workers,stock,revenue,expenses,active) VALUES(?,?,?,?,?,?,?,?,?,1)",(cid,o[0],f"{typ.title()} de {name} {i+1}",typ,random.randint(300,1800),random.randint(1,6),random.randint(20,100),0,0))
+
+def economy_daily_tick(c,wd):
+    # Production, consumption and prices are local to each city.
+    for m in c.execute("SELECT * FROM markets").fetchall():
+        stock=m["stock"]; demand=m["demand"]
+        delta_stock=0; delta_demand=0
+        if m["good"]=="trigo": delta_stock=random.randint(2,9)
+        elif m["good"]=="madera": delta_stock=random.randint(1,5)
+        elif m["good"]=="pescado": delta_stock=random.randint(1,6)
+        elif m["good"] in ("hierro","piedra","sal"): delta_stock=random.randint(0,3)
+        # population creates continuous demand; local shocks create variation.
+        pop=c.execute("SELECT COUNT(*) FROM people WHERE alive=1 AND city_id=?",(m["city_id"],)).fetchone()[0]
+        delta_demand=max(1,round(pop/180))+random.choice([-1,0,0,1,2])
+        stock=max(0,stock+delta_stock-delta_demand)
+        demand=max(20,demand+delta_demand+random.choice([-3,-1,0,1,2]))
+        scarcity=demand/max(stock,1)
+        price=max(1,round(m["base_price"]*(0.55+min(3.5,scarcity)*0.45)))
+        c.execute("UPDATE markets SET stock=?,demand=?,price=?,last_change=? WHERE id=?",(stock,demand,price,price-m["price"],m["id"]))
+    # Businesses earn from local trade and pay workers/expenses.
+    for b in c.execute("SELECT * FROM businesses WHERE active=1").fetchall():
+        good={"panadería":"trigo","taller":"hierro","tienda":"sal","granja":"trigo","carpintería":"madera","pesquería":"pescado"}.get(b["business_type"],"trigo")
+        m=c.execute("SELECT * FROM markets WHERE city_id=? AND good=?",(b["city_id"],good)).fetchone()
+        if not m: continue
+        output=max(1,b["workers"]//2+random.randint(0,2)); sales=min(output+random.randint(0,4),m["stock"])
+        revenue=sales*m["price"]; expenses=max(1,b["workers"]*random.randint(2,5)+random.randint(1,8)); capital=max(0,b["capital"]+revenue-expenses)
+        c.execute("UPDATE businesses SET capital=?,stock=max(0,stock+?-?),revenue=?,expenses=? WHERE id=?",(capital,output,sales,revenue,expenses,b["id"]))
+        if capital<0: c.execute("UPDATE businesses SET active=0 WHERE id=?",(b["id"],))
+    # Wages and household purchasing power.
+    if wd%7==0:
+        rows=c.execute("SELECT id,monthly_income,monthly_expense,wealth FROM people WHERE alive=1 AND age>=15").fetchall()
+        for p in rows:
+            wage=max(0,round(p["monthly_income"]/4)); cost=max(0,round(p["monthly_expense"]/4))
+            c.execute("UPDATE people SET wealth=max(0,wealth+?) WHERE id=?",(wage-cost,p["id"]))
+    # Occasional intercity shipment based on price differences.
+    if wd%3==0:
+        cities=[r[0] for r in c.execute("SELECT id FROM cities").fetchall()]
+        if len(cities)>=2:
+            origin,dest=random.sample(cities,2); good=random.choice(list(GOOD_BASE))
+            a=c.execute("SELECT * FROM markets WHERE city_id=? AND good=?",(origin,good)).fetchone(); b=c.execute("SELECT * FROM markets WHERE city_id=? AND good=?",(dest,good)).fetchone()
+            route=c.execute("SELECT * FROM routes WHERE (from_city_id=? AND to_city_id=?) OR (from_city_id=? AND to_city_id=?) ORDER BY safety DESC LIMIT 1",(origin,dest,dest,origin)).fetchone()
+            if a and b and route and b["price"]>a["price"]*1.18 and a["stock"]>30:
+                qty=min(20+random.randint(0,30),a["stock"],route["capacity"]//10); cost=qty*a["price"]
+                owner=c.execute("SELECT id FROM people WHERE alive=1 AND kingdom_id=(SELECT kingdom_id FROM cities WHERE id=?) AND job='mercader' ORDER BY RANDOM() LIMIT 1",(origin,)).fetchone()
+                if qty>0 and owner:
+                    c.execute("UPDATE markets SET stock=stock-? WHERE id=?",(qty,a["id"]))
+                    days=max(1,round(route["distance"]/70*(100-route["condition"]+40)/100))
+                    c.execute("INSERT INTO shipments(route_id,good,quantity,origin_city,destination_city,status,days_left,price_paid,owner_id,created_day) VALUES(?,?,?,?,?,?,?,?,?,?)",(route["id"],good,qty,origin,dest,"en tránsito",days,cost,owner[0],wd))
+                    if random.random()<.25: add_event(c,wd,"Una caravana parte hacia otro mercado",f"Una carga de {good} salió de una ciudad con destino a un mercado donde el precio era más alto.",2,cause="diferencia local de precios",location=f"ruta {origin}→{dest}")
+    # Advance existing shipments.
+    for sh in c.execute("SELECT * FROM shipments WHERE status='en tránsito'").fetchall():
+        left=sh["days_left"]-1
+        if left>0:
+            c.execute("UPDATE shipments SET days_left=? WHERE id=?",(int(left),int(sh["id"])))
+        else:
+            c.execute("UPDATE markets SET stock=stock+? WHERE city_id=? AND good=?",(sh["quantity"],sh["destination_city"],sh["good"]))
+            c.execute("UPDATE shipments SET status='entregado',days_left=0 WHERE id=?",(int(sh["id"]),))
+            if random.random()<.35:
+                city=c.execute("SELECT name FROM cities WHERE id=?",(sh["destination_city"],)).fetchone()[0]
+                add_event(c,wd,"Llega una carga al mercado",f"Una carga de {sh['quantity']} unidades de {sh['good']} llegó a {city} después de viajar por tierra o agua.",2,cause="comercio interurbano",location=city)
+    # Rare price shock events driven by real scarcity.
+    if wd%5==0:
+        m=c.execute("SELECT m.*,c.name city FROM markets m JOIN cities c ON c.id=m.city_id WHERE m.demand>m.stock*2.4 ORDER BY (m.demand-max(m.stock,1)) DESC LIMIT 1").fetchone()
+        if m and random.random()<.65:
+            add_event(c,wd,"Escasez en un mercado",f"La oferta de {m['good']} en {m['city']} quedó por debajo de la demanda y su precio subió a {m['price']} monedas.",3,cause="oferta insuficiente frente a la demanda",location=m['city'])
 
 def world_day(w): return (w["year"]-247)*365+w["day"]
 
@@ -364,6 +453,7 @@ def _tick_unlocked(days=1):
             c.execute("UPDATE people SET age=age+1 WHERE alive=1")
             add_event(c,wd,"Comienza un nuevo año",f"El año {year} comienza en Aurelia y Valdoria. Las personas continúan sus vidas mientras cambian lentamente las relaciones, fortunas y objetivos.",4,cause="paso del tiempo",location="Aurelia y Valdoria")
         needs_and_daily_economy(c,wd)
+        economy_daily_tick(c,wd)
         relationship_tick(c,wd)
         birth_tick(c,wd)
         death_tick(c,wd)
@@ -415,8 +505,9 @@ def get_world():
     parties=[dict(x) for x in c.execute("SELECT p.*,k.name AS kingdom FROM parties p JOIN kingdoms k ON k.id=p.kingdom_id ORDER BY k.id,p.influence DESC")]
     offices=[dict(x) for x in c.execute("SELECT o.*,p.name AS person_name,k.name AS kingdom FROM offices o JOIN people p ON p.id=o.person_id JOIN kingdoms k ON k.id=o.kingdom_id ORDER BY k.id,o.power DESC")]
     ppl=[dict(x) for x in c.execute("SELECT id,name,age,job,wealth,status,kingdom_id,goal,reputation,hunger,energy,social,health,morale,trait,secondary_trait,last_action,mother_id,father_id,partner_id FROM people WHERE alive=1 ORDER BY RANDOM() LIMIT 16")]
+    economy={"markets":c.execute("SELECT COUNT(*) FROM markets").fetchone()[0],"businesses":c.execute("SELECT COUNT(*) FROM businesses WHERE active=1").fetchone()[0],"shipments":c.execute("SELECT COUNT(*) FROM shipments WHERE status='en tránsito'").fetchone()[0],"avg_price":round(c.execute("SELECT COALESCE(AVG(price),0) FROM markets").fetchone()[0])}
     c.close()
-    return {"world":w,"population":pop,"nobles":nobles,"families":families,"avg_health":avg_health,"avg_wealth":avg_wealth,"kingdoms":ks,"parties":parties,"offices":offices,"events":events,"people":ppl}
+    return {"world":w,"population":pop,"nobles":nobles,"families":families,"avg_health":avg_health,"avg_wealth":avg_wealth,"kingdoms":ks,"parties":parties,"offices":offices,"events":events,"people":ppl,"economy":economy}
 
 
 @app.get("/api/people/{person_id}")
@@ -447,8 +538,8 @@ def get_layers():
     catch_up(); c=db()
     regions=[dict(x) for x in c.execute("SELECT r.*,k.name kingdom FROM regions r JOIN kingdoms k ON k.id=r.kingdom_id ORDER BY r.id")]
     cities=[dict(x) for x in c.execute("SELECT c.*,r.name region,k.name kingdom FROM cities c JOIN regions r ON r.id=c.region_id JOIN kingdoms k ON k.id=c.kingdom_id ORDER BY c.id")]; districts=[dict(x) for x in c.execute("SELECT d.*,c.name city FROM districts d JOIN cities c ON c.id=d.city_id ORDER BY d.city_id,d.id")]
-    properties=[dict(x) for x in c.execute("SELECT p.*,c.name city,d.name district,COALESCE(pe.name,'Sin propietario') owner FROM properties p JOIN cities c ON c.id=p.city_id JOIN districts d ON d.id=p.district_id LEFT JOIN people pe ON pe.id=p.owner_id ORDER BY p.value DESC LIMIT 80")]; resources=[dict(x) for x in c.execute("SELECT r.*,g.name region FROM resources r JOIN regions g ON g.id=r.region_id ORDER BY g.id")]; routes=[dict(x) for x in c.execute("SELECT r.*,a.name from_city,b.name to_city FROM routes r JOIN cities a ON a.id=r.from_city_id JOIN cities b ON b.id=r.to_city_id ORDER BY r.id")]; conflicts=[dict(x) for x in c.execute("SELECT * FROM conflicts ORDER BY id DESC LIMIT 30")]
-    c.close(); return {"regions":regions,"cities":cities,"districts":districts,"properties":properties,"resources":resources,"routes":routes,"conflicts":conflicts}
+    properties=[dict(x) for x in c.execute("SELECT p.*,c.name city,d.name district,COALESCE(pe.name,'Sin propietario') owner FROM properties p JOIN cities c ON c.id=p.city_id JOIN districts d ON d.id=p.district_id LEFT JOIN people pe ON pe.id=p.owner_id ORDER BY p.value DESC LIMIT 80")]; resources=[dict(x) for x in c.execute("SELECT r.*,g.name region FROM resources r JOIN regions g ON g.id=r.region_id ORDER BY g.id")]; routes=[dict(x) for x in c.execute("SELECT r.*,a.name from_city,b.name to_city FROM routes r JOIN cities a ON a.id=r.from_city_id JOIN cities b ON b.id=r.to_city_id ORDER BY r.id")]; conflicts=[dict(x) for x in c.execute("SELECT * FROM conflicts ORDER BY id DESC LIMIT 30")]; markets=[dict(x) for x in c.execute("SELECT m.*,c.name city FROM markets m JOIN cities c ON c.id=m.city_id ORDER BY c.id,m.good")]; businesses=[dict(x) for x in c.execute("SELECT b.*,c.name city,COALESCE(p.name,'Sin dueño') owner FROM businesses b JOIN cities c ON c.id=b.city_id LEFT JOIN people p ON p.id=b.owner_id ORDER BY b.capital DESC LIMIT 80")]; shipments=[dict(x) for x in c.execute("SELECT s.*,a.name origin_name,b.name destination_name FROM shipments s JOIN cities a ON a.id=s.origin_city JOIN cities b ON b.id=s.destination_city ORDER BY s.id DESC LIMIT 40")]
+    c.close(); return {"regions":regions,"cities":cities,"districts":districts,"properties":properties,"resources":resources,"routes":routes,"conflicts":conflicts,"markets":markets,"businesses":businesses,"shipments":shipments}
 
 @app.get("/api/cities/{city_id}")
 def get_city(city_id:int):
