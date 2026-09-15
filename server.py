@@ -1,12 +1,12 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-import sqlite3, random, os, time, asyncio, threading, math
+import sqlite3, random, os, time, asyncio, threading, math, json
 
 SIM_LOCK = threading.Lock()
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.path.join(BASE, "world.db")
-app = FastAPI(title="Reino Vivo v0.9")
+app = FastAPI(title="Reino Vivo v1.1 — Sistema Divino")
 
 MALE = ["Aren","Bran","Corvin","Edric","Garen","Hugo","Ivar","Jon","Kael","Lucan","Marek","Nolan","Oren","Perrin","Ronan","Tomas","Dario","León","Mateo","Silas"]
 FEMALE = ["Aelia","Brina","Celia","Fiona","Gwen","Isla","Lena","Mara","Neria","Olia","Rhea","Selene","Talia","Una","Vera","Yara","Elia","Nora","Livia","Mira"]
@@ -61,16 +61,22 @@ def init():
     CREATE TABLE IF NOT EXISTS businesses(id INTEGER PRIMARY KEY AUTOINCREMENT, city_id INTEGER, owner_id INTEGER, name TEXT, business_type TEXT, capital INTEGER, workers INTEGER, stock INTEGER, revenue INTEGER, expenses INTEGER, active INTEGER DEFAULT 1);
     CREATE TABLE IF NOT EXISTS shipments(id INTEGER PRIMARY KEY AUTOINCREMENT, route_id INTEGER, good TEXT, quantity INTEGER, origin_city INTEGER, destination_city INTEGER, status TEXT, days_left INTEGER, price_paid INTEGER, owner_id INTEGER, created_day INTEGER);
     CREATE TABLE IF NOT EXISTS loans(id INTEGER PRIMARY KEY AUTOINCREMENT, borrower_id INTEGER, lender_id INTEGER, principal INTEGER, remaining INTEGER, interest INTEGER, status TEXT, created_day INTEGER);
-    CREATE TABLE IF NOT EXISTS military_units(id INTEGER PRIMARY KEY AUTOINCREMENT, kingdom_id INTEGER, name TEXT, unit_type TEXT, commander_id INTEGER, location_city_id INTEGER, training INTEGER, experience INTEGER, morale INTEGER, discipline INTEGER, supplies INTEGER, horses INTEGER, salary_budget INTEGER, status TEXT);
-    CREATE TABLE IF NOT EXISTS military_members(id INTEGER PRIMARY KEY AUTOINCREMENT, unit_id INTEGER, person_id INTEGER UNIQUE, rank TEXT, joined_day INTEGER, active INTEGER DEFAULT 1);
-    CREATE TABLE IF NOT EXISTS equipment(id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, item_type TEXT, material TEXT, quality INTEGER, condition INTEGER, value INTEGER, origin TEXT, emblem TEXT, active INTEGER DEFAULT 1);
-    CREATE TABLE IF NOT EXISTS security_contracts(id INTEGER PRIMARY KEY AUTOINCREMENT, employer_id INTEGER, guard_id INTEGER, contract_type TEXT, wage INTEGER, loyalty INTEGER, start_day INTEGER, end_day INTEGER, status TEXT);
-    CREATE TABLE IF NOT EXISTS security_incidents(id INTEGER PRIMARY KEY AUTOINCREMENT, world_day INTEGER, city_id INTEGER, incident_type TEXT, severity INTEGER, victim_id INTEGER, suspect_id INTEGER, status TEXT, description TEXT);
-    CREATE TABLE IF NOT EXISTS justice_cases(id INTEGER PRIMARY KEY AUTOINCREMENT, world_day INTEGER, city_id INTEGER, complainant_id INTEGER, accused_id INTEGER, case_type TEXT, status TEXT, evidence_strength INTEGER, corruption INTEGER, sentence TEXT, description TEXT);
-    CREATE TABLE IF NOT EXISTS evidence(id INTEGER PRIMARY KEY AUTOINCREMENT, case_id INTEGER, kind TEXT, reliability INTEGER, discovered_by INTEGER, description TEXT);
-    CREATE TABLE IF NOT EXISTS campaigns(id INTEGER PRIMARY KEY AUTOINCREMENT, kingdom_id INTEGER, name TEXT, objective TEXT, target_kingdom_id INTEGER, status TEXT, start_day INTEGER, supplies INTEGER, morale INTEGER);
-    CREATE TABLE IF NOT EXISTS battles(id INTEGER PRIMARY KEY AUTOINCREMENT, campaign_id INTEGER, world_day INTEGER, location TEXT, attacker_kingdom_id INTEGER, defender_kingdom_id INTEGER, attacker_units TEXT, defender_units TEXT, terrain TEXT, weather TEXT, intelligence INTEGER, outcome TEXT, attacker_losses INTEGER, defender_losses INTEGER, description TEXT);
-    CREATE TABLE IF NOT EXISTS mercenary_contracts(id INTEGER PRIMARY KEY AUTOINCREMENT, kingdom_id INTEGER, group_name TEXT, commander_id INTEGER, mission TEXT, wage INTEGER, reputation INTEGER, start_day INTEGER, end_day INTEGER, status TEXT);
+    CREATE TABLE IF NOT EXISTS divine_interventions(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, world_day INTEGER, action TEXT, target_type TEXT, target_id INTEGER,
+        parameters TEXT, description TEXT, consequence TEXT DEFAULT '', created_at REAL
+    );
+    CREATE TABLE IF NOT EXISTS divine_schedules(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, execute_day INTEGER, action TEXT, target_type TEXT, target_id INTEGER,
+        parameters TEXT, description TEXT, active INTEGER DEFAULT 1
+    );
+    CREATE TABLE IF NOT EXISTS letters(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, world_day INTEGER, sender TEXT, recipient_id INTEGER, content TEXT,
+        delivered INTEGER DEFAULT 0, divine_origin INTEGER DEFAULT 1, delivery_day INTEGER, status TEXT DEFAULT 'programada'
+    );
+    CREATE TABLE IF NOT EXISTS divine_weather(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, start_day INTEGER, end_day INTEGER, region_id INTEGER, weather TEXT, intensity INTEGER,
+        description TEXT, active INTEGER DEFAULT 1
+    );
     """)
     # v0.7 additions. Safe on an existing v0.6 database.
     additions = [
@@ -116,7 +122,7 @@ def init():
             c.execute("UPDATE people SET trait=COALESCE(NULLIF(trait,''),?), secondary_trait=COALESCE(NULLIF(secondary_trait,''),?), monthly_income=CASE WHEN monthly_income IS NULL OR monthly_income=0 THEN CASE WHEN age>=15 THEN 25 ELSE 0 END ELSE monthly_income END, monthly_expense=CASE WHEN monthly_expense IS NULL OR monthly_expense=0 THEN CASE WHEN age>=15 THEN 12 ELSE 3 END ELSE monthly_expense END, home_quality=COALESCE(home_quality,50), routine=COALESCE(NULLIF(routine,''),job)" ,(random.choice(TRAITS),random.choice(TRAITS)))
     ensure_physical_world(c)
     ensure_economy(c)
-    ensure_military(c); c.commit(); c.close()
+    c.commit(); c.close()
 
 
 def ensure_physical_world(c):
@@ -230,135 +236,6 @@ def ensure_economy(c):
             for i,o in enumerate(owners[:4]):
                 typ=random.choice(["panadería","taller","tienda","granja","carpintería","pesquería"])
                 c.execute("INSERT INTO businesses(city_id,owner_id,name,business_type,capital,workers,stock,revenue,expenses,active) VALUES(?,?,?,?,?,?,?,?,?,1)",(cid,o[0],f"{typ.title()} de {name} {i+1}",typ,random.randint(300,1800),random.randint(1,6),random.randint(20,100),0,0))
-
-
-def ensure_military(c):
-    if c.execute("SELECT COUNT(*) FROM military_units").fetchone()[0] > 0:
-        return
-    for k in (1,2):
-        cities=[r[0] for r in c.execute("SELECT id FROM cities WHERE kingdom_id=? ORDER BY id",(k,)).fetchall()]
-        soldiers=[r for r in c.execute("SELECT * FROM people WHERE kingdom_id=? AND alive=1 AND age>=18 AND job='soldado' ORDER BY id",(k,)).fetchall()]
-        guards=[r for r in c.execute("SELECT * FROM people WHERE kingdom_id=? AND alive=1 AND age>=18 AND job='guardia' ORDER BY id",(k,)).fetchall()]
-        if len(soldiers)<30:
-            extras=c.execute("SELECT * FROM people WHERE kingdom_id=? AND alive=1 AND age>=18 AND job NOT IN ('soldado','guardia') ORDER BY RANDOM() LIMIT ?",(k,40-len(soldiers))).fetchall()
-            for x in extras:
-                c.execute("UPDATE people SET job='soldado' WHERE id=?",(x['id'],)); soldiers.append(x)
-        for idx,ut in enumerate(["Guardia Real","Infantería","Reserva"]):
-            commander=soldiers[min(idx,len(soldiers)-1)]["id"] if soldiers else None
-            city=cities[idx%len(cities)] if cities else None
-            c.execute("INSERT INTO military_units(kingdom_id,name,unit_type,commander_id,location_city_id,training,experience,morale,discipline,supplies,horses,salary_budget,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",(k,f"{ut} de {kingdom_name(c,k)}",ut,commander,city,random.randint(45,75),random.randint(10,45),random.randint(55,85),random.randint(55,90),random.randint(70,100),random.randint(3,15),random.randint(800,1800),'activo'))
-            uid=c.execute("SELECT last_insert_rowid()").fetchone()[0]
-            members=soldiers[idx*20:(idx+1)*20]
-            for rank,p in zip(["comandante"]+['soldado']*19,members):
-                c.execute("INSERT OR IGNORE INTO military_members(unit_id,person_id,rank,joined_day,active) VALUES(?,?,?,?,1)",(uid,p['id'],rank,1))
-        # Convert a few guards into formal private-security contracts.
-        for g in guards[:8]:
-            owner=c.execute("SELECT id FROM people WHERE alive=1 AND kingdom_id=? AND status='noble' ORDER BY RANDOM() LIMIT 1",(k,)).fetchone()
-            if owner:
-                c.execute("INSERT INTO security_contracts(employer_id,guard_id,contract_type,wage,loyalty,start_day,end_day,status) VALUES(?,?,?,?,?,?,?,?)",(owner['id'],g['id'],'protección de propiedad',random.randint(18,35),random.randint(55,90),1,0,'activo'))
-        # Give military equipment to soldiers/guards.
-        for p in soldiers[:60]+guards[:15]:
-            if c.execute("SELECT 1 FROM equipment WHERE owner_id=? LIMIT 1",(p['id'],)).fetchone(): continue
-            item=random.choice([('espada','acero'),('lanza','hierro'),('escudo','madera'),('arco','madera'),('cota de malla','hierro')])
-            c.execute("INSERT INTO equipment(owner_id,item_type,material,quality,condition,value,origin,emblem,active) VALUES(?,?,?,?,?,?,?,?,1)",(p['id'],item[0],item[1],random.randint(45,85),random.randint(65,100),random.randint(20,140),kingdom_name(c,k),kingdom_name(c,k)))
-        # A small autonomous mercenary market.
-        merc=c.execute("SELECT id,name FROM people WHERE kingdom_id=? AND alive=1 AND age>=18 AND job IN ('soldado','guardia') ORDER BY RANDOM() LIMIT 1",(k,)).fetchone()
-        if merc:
-            c.execute("INSERT INTO mercenary_contracts(kingdom_id,group_name,commander_id,mission,wage,reputation,start_day,end_day,status) VALUES(?,?,?,?,?,?,?,?,?)",(k,f"Compañía {merc['name']}",merc['id'],'disponible para contratos',random.randint(120,240),random.randint(35,75),1,0,'disponible'))
-    add_event(c,1,"Nacen las fuerzas organizadas","Los reinos estructuran unidades oficiales, guardias privados y un pequeño mercado de mercenarios. Cada combatiente conserva su propia vida y vínculos fuera del servicio.",4,cause="organización militar inicial",location="Aurelia y Valdoria")
-
-
-def security_justice_tick(c,wd):
-    # Incident probability depends on city security and local stress.
-    cities=c.execute("SELECT * FROM cities").fetchall()
-    for city in cities:
-        pop=max(1,c.execute("SELECT COUNT(*) FROM people WHERE alive=1 AND city_id=?",(city['id'],)).fetchone()[0])
-        chance=max(0.001,min(0.05,(100-city['security'])/3000 + pop/250000))
-        if random.random()<chance:
-            typ=random.choice(['hurto','agresión','fraude','disputa vecinal','daño a propiedad'])
-            victim=c.execute("SELECT id FROM people WHERE alive=1 AND city_id=? ORDER BY RANDOM() LIMIT 1",(city['id'],)).fetchone()
-            suspect=c.execute("SELECT id FROM people WHERE alive=1 AND city_id=? AND id!=? ORDER BY RANDOM() LIMIT 1",(city['id'],victim['id'] if victim else -1)).fetchone()
-            sev=random.randint(1,4)
-            c.execute("INSERT INTO security_incidents(world_day,city_id,incident_type,severity,victim_id,suspect_id,status,description) VALUES(?,?,?,?,?,?,?,?)",(wd,city['id'],typ,sev,victim['id'] if victim else None,suspect['id'] if suspect else None,'reportado',f"Se reportó {typ} en {city['name']}. La guardia local debe decidir si investigar y cómo actuar."))
-            c.execute("UPDATE cities SET security=max(20,security-?) WHERE id=?",(1 if sev>=3 else 0,city['id']))
-            if sev>=3 and victim:
-                c.execute("INSERT INTO justice_cases(world_day,city_id,complainant_id,accused_id,case_type,status,evidence_strength,corruption,sentence,description) VALUES(?,?,?,?,?,?,?,?,?,?)",(wd,city['id'],victim['id'],suspect['id'] if suspect else None,typ,'investigación',random.randint(20,75),random.randint(0,15),'pendiente',f"Caso abierto a partir de un incidente de {typ}."))
-                add_event(c,wd,"La guardia recibe una denuncia",f"Una denuncia por {typ} fue registrada en {city['name']}. La resolución dependerá de pruebas, testigos, investigación y posibles interferencias.",2,cause="incidente de seguridad",location=city['name'])
-    # Resolve a small number of cases using evidence + corruption + uncertainty.
-    cases=c.execute("SELECT * FROM justice_cases WHERE status IN ('investigación','juicio') ORDER BY id LIMIT 8").fetchall()
-    for case in cases:
-        if case['status']=='investigación' and random.random()<0.35:
-            evidence=random.randint(15,85); corruption=case['corruption']+random.randint(-5,8)
-            c.execute("UPDATE justice_cases SET status='juicio',evidence_strength=?,corruption=? WHERE id=?",(max(0,min(100,evidence)),max(0,min(60,corruption)),case['id']))
-        elif case['status']=='juicio' and random.random()<0.30:
-            score=case['evidence_strength']-case['corruption']+random.randint(-20,20)
-            sentence='absuelto' if score<30 else ('multa' if score<65 else 'prisión')
-            c.execute("UPDATE justice_cases SET status='resuelto',sentence=? WHERE id=?",(sentence,case['id']))
-            add_event(c,wd,"Un caso judicial llega a una resolución",f"Un tribunal resolvió un caso de {case['case_type']}: {sentence}. La evidencia y las circunstancias influyeron en el resultado.",3,cause="proceso judicial",location=str(case['city_id']))
-
-
-def military_daily_tick(c,wd):
-    # Soldiers receive wages, train, consume supplies and can leave service.
-    for u in c.execute("SELECT * FROM military_units WHERE status='activo'").fetchall():
-        n=c.execute("SELECT COUNT(*) FROM military_members WHERE unit_id=? AND active=1",(u['id'],)).fetchone()[0]
-        consumption=max(1,n//12)
-        supplies=max(0,u['supplies']-consumption)
-        training=max(0,min(100,u['training']+(1 if wd%14==0 else 0)))
-        morale=max(0,min(100,u['morale']+random.choice([-1,0,0,1])))
-        discipline=max(0,min(100,u['discipline']+random.choice([-1,0,0,1])))
-        if supplies<25: morale=max(0,morale-random.randint(1,4))
-        c.execute("UPDATE military_units SET supplies=?,training=?,morale=?,discipline=? WHERE id=?",(supplies,training,morale,discipline,u['id']))
-        if wd%7==0:
-            members=c.execute("SELECT p.id,p.wealth FROM military_members mm JOIN people p ON p.id=mm.person_id WHERE mm.unit_id=? AND mm.active=1",(u['id'],)).fetchall()
-            for p in members:
-                c.execute("UPDATE people SET wealth=wealth+? WHERE id=?",(random.randint(3,7),p['id']))
-        if supplies<15 and random.random()<0.08:
-            add_event(c,wd,"Una unidad militar necesita suministros",f"{u['name']} está consumiendo sus reservas y su moral comienza a resentirse.",3,cause="consumo logístico",location=str(u['location_city_id']))
-    # Equipment slowly deteriorates.
-    c.execute("UPDATE equipment SET condition=max(0,condition-1) WHERE active=1 AND ? % 12=0",(wd,))
-    # Guards patrol and can improve city security when enough are present.
-    for city in c.execute("SELECT id FROM cities").fetchall():
-        guards=c.execute("SELECT COUNT(*) FROM people WHERE alive=1 AND city_id=? AND job='guardia'",(city['id'],)).fetchone()[0]
-        if guards>2 and wd%5==0: c.execute("UPDATE cities SET security=min(100,security+1) WHERE id=?",(city['id'],))
-
-
-def war_tick(c,wd):
-    # Wars are emergent: only create a campaign when both kingdoms have stability pressure and resources.
-    existing=c.execute("SELECT COUNT(*) FROM campaigns WHERE status='activa'").fetchone()[0]
-    if existing==0 and wd%45==0:
-        k1,k2=c.execute("SELECT id,stability FROM kingdoms ORDER BY stability ASC").fetchall()
-        if k1 and k2 and k1['stability']<55 and k2['stability']<55 and random.random()<0.18:
-            c.execute("INSERT INTO campaigns(kingdom_id,name,objective,target_kingdom_id,status,start_day,supplies,morale) VALUES(?,?,?,?,?,?,?,?)",(k1['id'],f"Campaña de frontera {wd}",'presionar frontera',k2['id'],'activa',wd,random.randint(60,100),random.randint(45,80)))
-            add_event(c,wd,"Tensión fronteriza escala","La combinación de presión política, recursos limitados y baja estabilidad ha producido una campaña militar. No existe un resultado predeterminado.",5,cause="condiciones políticas y económicas",location="frontera")
-    for camp in c.execute("SELECT * FROM campaigns WHERE status='activa'").fetchall():
-        if camp['supplies']<=0 or camp['morale']<20:
-            c.execute("UPDATE campaigns SET status='retirada' WHERE id=?",(camp['id'],)); add_event(c,wd,"Una campaña termina por desgaste","La logística y la moral obligaron a una fuerza a retirarse antes de lograr su objetivo.",4,cause="desgaste militar",location="frontera"); continue
-        if wd%7==0:
-            atk=c.execute("SELECT * FROM military_units WHERE kingdom_id=? AND status='activo' ORDER BY morale DESC LIMIT 2",(camp['kingdom_id'],)).fetchall()
-            deff=c.execute("SELECT * FROM military_units WHERE kingdom_id=? AND status='activo' ORDER BY morale DESC LIMIT 2",(camp['target_kingdom_id'],)).fetchall()
-            if not atk or not deff: continue
-            terrain=random.choice(['llanura','bosque','montaña','costa']); weather=random.choice(['despejado','lluvia','viento','niebla'])
-            a_score=sum(u['training']+u['experience']+u['morale']+u['discipline']+u['supplies']//2 for u in atk)+random.randint(-80,80)
-            d_score=sum(u['training']+u['experience']+u['morale']+u['discipline']+u['supplies']//2 for u in deff)+random.randint(-80,80)
-            if terrain=='montaña': d_score+=30
-            if terrain=='bosque': d_score+=15
-            if weather=='lluvia': a_score-=10
-            outcome='victoria atacante' if a_score>d_score else 'victoria defensor'
-            aloss=random.randint(2,14)+(0 if outcome=='victoria atacante' else random.randint(3,12)); dloss=random.randint(2,14)+(random.randint(3,12) if outcome=='victoria atacante' else 0)
-            c.execute("INSERT INTO battles(campaign_id,world_day,location,attacker_kingdom_id,defender_kingdom_id,attacker_units,defender_units,terrain,weather,intelligence,outcome,attacker_losses,defender_losses,description) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(camp['id'],wd,'frontera',camp['kingdom_id'],camp['target_kingdom_id'],','.join(str(x['id']) for x in atk),','.join(str(x['id']) for x in deff),terrain,weather,random.randint(20,90),outcome,aloss,dloss,'Resultado calculado por fuerza, entrenamiento, moral, disciplina, suministros, terreno, clima e incertidumbre.'))
-            c.execute("UPDATE campaigns SET supplies=max(0,supplies-?),morale=max(0,morale+?) WHERE id=?",(random.randint(8,18),random.randint(-12,7),camp['id']))
-            add_event(c,wd,"Se libra una batalla",f"En terreno de {terrain} y con {weather}, una batalla terminó con {outcome}. Bajas estimadas: {aloss} atacantes y {dloss} defensores.",5,cause="campaña militar",location="frontera")
-            # Translate losses into individual consequences.
-            for unit,losses in [(atk[0],aloss),(deff[0],dloss)]:
-                victims=c.execute("SELECT mm.person_id FROM military_members mm WHERE mm.unit_id=? AND mm.active=1 ORDER BY RANDOM() LIMIT ?",(unit['id'],min(losses,20))).fetchall()
-                for v in victims:
-                    if random.random()<0.25:
-                        c.execute("UPDATE people SET alive=0 WHERE id=?",(v['person_id'],))
-                    else:
-                        c.execute("UPDATE people SET health=max(1,health-?) WHERE id=?",(random.randint(10,45),v['person_id']))
-                    c.execute("UPDATE military_members SET active=0 WHERE person_id=?",(v['person_id'],))
-            if camp['morale']<25 or camp['supplies']<25:
-                c.execute("UPDATE campaigns SET status='retirada' WHERE id=?",(camp['id'],))
 
 def economy_daily_tick(c,wd):
     # Production, consumption and prices are local to each city.
@@ -582,6 +459,95 @@ def social_events(c,wd):
                 add_event(c,wd,"Viajeros en los caminos",f"Personas que se desplazan entre comunidades llevaron conversaciones y noticias de un lugar a otro.",2,cause="movimiento de población",location=kingdom_name(c,r['kingdom_id']))
 
 
+def divine_log(c, wd, action, target_type, target_id, parameters, description, consequence=""):
+    c.execute("INSERT INTO divine_interventions(world_day,action,target_type,target_id,parameters,description,consequence,created_at) VALUES(?,?,?,?,?,?,?,?)",
+              (wd,action,target_type,target_id,json.dumps(parameters,ensure_ascii=False),description,consequence,time.time()))
+
+def execute_divine(c, wd, action, target_type, target_id, params, description=""):
+    # God has no simulation-side permission checks. The simulation only resolves consequences.
+    consequence=""
+    if action=="kill_person":
+        person=c.execute("SELECT * FROM people WHERE id=?",(target_id,)).fetchone()
+        if not person: raise HTTPException(404,"Persona no encontrada")
+        if person["alive"]:
+            c.execute("UPDATE people SET alive=0,health=0 WHERE id=?",(target_id,))
+            # Property/business inheritance is intentionally left to normal social/economic systems.
+            add_event(c,wd,"Una muerte inesperada",f"{person['name']} murió de forma repentina. La causa no pudo explicarse de inmediato.",4,cause="acontecimiento inexplicable",location=kingdom_name(c,person["kingdom_id"]),actors=person["name"])
+            consequence="La muerte afecta a su familia, relaciones, trabajo, propiedades y otros sistemas en los siguientes ciclos."
+    elif action=="save_person":
+        person=c.execute("SELECT * FROM people WHERE id=?",(target_id,)).fetchone()
+        if not person: raise HTTPException(404,"Persona no encontrada")
+        c.execute("UPDATE people SET alive=1,health=max(50,health),morale=max(50,morale) WHERE id=?",(target_id,))
+        consequence="La supervivencia mantiene abiertas todas las futuras ramas causales de esta persona."
+        add_event(c,wd,"Una vida se prolonga",f"{person['name']} sobrevivió a un desenlace que parecía inevitable.",4,cause="acontecimiento inexplicable",location=kingdom_name(c,person["kingdom_id"]),actors=person["name"])
+    elif action=="grant_wealth":
+        amount=int(params.get("amount",10000)); kind=target_type
+        if kind=="kingdom": c.execute("UPDATE kingdoms SET gold=gold+? WHERE id=?",(amount,target_id)); name=c.execute("SELECT name FROM kingdoms WHERE id=?",(target_id,)).fetchone()[0]
+        elif kind=="person": c.execute("UPDATE people SET wealth=wealth+? WHERE id=?",(amount,target_id)); name=c.execute("SELECT name FROM people WHERE id=?",(target_id,)).fetchone()[0]
+        else: raise HTTPException(400,"Objetivo de riqueza inválido")
+        consequence=f"Se añadieron {amount} monedas a {name}; los mercados y decisiones futuras pueden reaccionar a la nueva riqueza."
+        add_event(c,wd,"Una riqueza de origen desconocido",f"Una cantidad extraordinaria de riqueza apareció en manos de {name}.",4,cause="origen desconocido",location=name)
+    elif action=="create_letter":
+        recipient=c.execute("SELECT * FROM people WHERE id=? AND alive=1",(target_id,)).fetchone()
+        if not recipient: raise HTTPException(404,"Destinatario no encontrado o fallecido")
+        deliver_day=int(params.get("delivery_day",wd)); sender=params.get("sender","Un remitente desconocido"); content=params.get("content","")
+        status="entregada" if deliver_day<=wd else "programada"
+        c.execute("INSERT INTO letters(world_day,sender,recipient_id,content,delivered,divine_origin,delivery_day,status) VALUES(?,?,?,?,?,?,?,?)",(wd,sender,target_id,content,1 if status=="entregada" else 0,1,deliver_day,status))
+        consequence="La carta entra en el sistema de información; el destinatario decide qué creer y qué hacer con ella."
+        if status=="entregada": c.execute("INSERT INTO knowledge(person_id,subject,content,certainty,source) VALUES(?,?,?,?,?)",(target_id,"carta",content,random.randint(60,95),sender))
+        else: c.execute("UPDATE letters SET status='programada' WHERE recipient_id=? AND delivery_day=?",(target_id,deliver_day))
+        add_event(c,wd,"Una carta cambia de manos",f"Una carta fue preparada para {recipient['name']}.",3,cause="intervención desconocida",location=kingdom_name(c,recipient["kingdom_id"]),actors=recipient["name"])
+    elif action=="create_conflict":
+        kingdom_id=int(params.get("kingdom_id",1)); title=params.get("title","Conflicto inesperado"); cause=params.get("cause","causa desconocida"); intensity=max(1,min(100,int(params.get("intensity",35)))); location=params.get("location",kingdom_name(c,kingdom_id)); parties=params.get("parties","personas desconocidas")
+        c.execute("INSERT INTO conflicts(world_day,kingdom_id,type,title,status,intensity,location,parties,cause,description) VALUES(?,?,?,?,?,?,?,?,?,?)",(wd,kingdom_id,params.get("type","social"),title,"activo",intensity,location,parties,cause,params.get("description","")))
+        consequence="El conflicto queda sometido a las decisiones autónomas de las personas y organizaciones implicadas."
+        add_event(c,wd,"Surge un conflicto",title,4,cause=cause,location=location,actors=parties)
+    elif action=="reveal_knowledge":
+        recipient=c.execute("SELECT * FROM people WHERE id=? AND alive=1",(target_id,)).fetchone()
+        if not recipient: raise HTTPException(404,"Persona no encontrada")
+        subject=params.get("subject","información"); content=params.get("content",""); certainty=max(0,min(100,int(params.get("certainty",100))))
+        c.execute("INSERT INTO knowledge(person_id,subject,content,certainty,source) VALUES(?,?,?,?,?)",(target_id,subject,content,certainty,"origen desconocido"))
+        consequence="El conocimiento fue entregado al NPC, pero su interpretación y uso siguen siendo autónomos."
+    elif action=="erase_knowledge":
+        subject=params.get("subject",""); c.execute("DELETE FROM knowledge WHERE person_id=? AND subject=?",(target_id,subject)); consequence="La información indicada fue retirada de la memoria informacional de ese NPC."
+    elif action=="change_relationship":
+        a=int(params.get("a_id",target_id)); b=int(params.get("b_id",0)); kind=params.get("kind","amistad"); strength=max(0,min(100,int(params.get("strength",80))))
+        if not c.execute("SELECT id FROM people WHERE id=?",(a,)).fetchone() or not c.execute("SELECT id FROM people WHERE id=?",(b,)).fetchone(): raise HTTPException(404,"Persona no encontrada")
+        c.execute("INSERT INTO relationships(a_id,b_id,kind,strength) VALUES(?,?,?,?) ON CONFLICT(a_id,b_id,kind) DO UPDATE SET strength=excluded.strength",(a,b,kind,strength))
+        consequence="La relación queda modificada; futuras experiencias pueden hacerla evolucionar."
+    elif action=="create_resource":
+        region=int(params.get("region_id",target_id)); rtype=params.get("resource_type","oro"); qty=max(1,int(params.get("quantity",1000))); quality=max(1,min(100,int(params.get("quality",100))))
+        c.execute("INSERT INTO resources(region_id,resource_type,quantity,quality,extraction) VALUES(?,?,?,?,?)",(region,rtype,qty,quality,max(1,min(100,int(params.get("extraction",100))))))
+        consequence="El recurso entra en la economía física y puede afectar producción, comercio, precios y política."
+    elif action=="weather":
+        region=int(params.get("region_id",target_id)); start=wd; duration=max(1,int(params.get("duration",3))); weather=params.get("weather","tormenta"); intensity=max(1,min(100,int(params.get("intensity",50))))
+        c.execute("INSERT INTO divine_weather(start_day,end_day,region_id,weather,intensity,description,active) VALUES(?,?,?,?,?,?,1)",(start,wd+duration-1,region,weather,intensity,params.get("description","Fenómeno meteorológico extraordinario")))
+        consequence="El clima se convierte en una condición del mundo durante el período indicado y puede afectar agricultura, rutas, seguridad y guerra."
+        add_event(c,wd,"Fenómeno meteorológico",f"Un episodio de {weather} afecta a la región.",4,cause="fenómeno natural inexplicable",location=str(region))
+    else:
+        raise HTTPException(400,"Intervención divina desconocida")
+    divine_log(c,wd,action,target_type,target_id,params,description,consequence)
+    return consequence
+
+def process_divine_schedules(c,wd):
+    rows=c.execute("SELECT * FROM divine_schedules WHERE active=1 AND execute_day<=? ORDER BY execute_day,id",(wd,)).fetchall()
+    for r in rows:
+        try:
+            execute_divine(c,wd,r["action"],r["target_type"],r["target_id"],json.loads(r["parameters"] or "{}"),r["description"] or "")
+            c.execute("UPDATE divine_schedules SET active=0 WHERE id=?",(r["id"],))
+        except Exception as e:
+            c.execute("UPDATE divine_schedules SET active=0 WHERE id=?",(r["id"],))
+            add_event(c,wd,"Intervención divina no ejecutada",f"Una intervención programada no pudo resolverse: {e}",2,cause="error de objetivo",location="mundo")
+    # Deliver scheduled divine letters through the information network.
+    letters=c.execute("SELECT * FROM letters WHERE delivered=0 AND delivery_day<=? AND status='programada'",(wd,)).fetchall()
+    for l in letters:
+        recipient=c.execute("SELECT * FROM people WHERE id=? AND alive=1",(l["recipient_id"],)).fetchone()
+        if recipient:
+            c.execute("INSERT INTO knowledge(person_id,subject,content,certainty,source) VALUES(?,?,?,?,?)",(recipient["id"],"carta",l["content"],random.randint(55,95),l["sender"]))
+            c.execute("UPDATE letters SET delivered=1,status='entregada' WHERE id=?",(l["id"],))
+            add_event(c,wd,"Una carta llega a su destinatario",f"Una carta de {l['sender']} llegó a {recipient['name']}.",3,cause="correo y transmisión de información",location=kingdom_name(c,recipient["kingdom_id"]),actors=recipient["name"])
+    c.execute("UPDATE divine_weather SET active=0 WHERE end_day<?",(wd,))
+
 def _tick_unlocked(days=1):
     c=db()
     for _ in range(days):
@@ -591,11 +557,9 @@ def _tick_unlocked(days=1):
             day=1; year+=1
             c.execute("UPDATE people SET age=age+1 WHERE alive=1")
             add_event(c,wd,"Comienza un nuevo año",f"El año {year} comienza en Aurelia y Valdoria. Las personas continúan sus vidas mientras cambian lentamente las relaciones, fortunas y objetivos.",4,cause="paso del tiempo",location="Aurelia y Valdoria")
+        process_divine_schedules(c,wd)
         needs_and_daily_economy(c,wd)
         economy_daily_tick(c,wd)
-        military_daily_tick(c,wd)
-        security_justice_tick(c,wd)
-        war_tick(c,wd)
         relationship_tick(c,wd)
         birth_tick(c,wd)
         death_tick(c,wd)
@@ -648,9 +612,8 @@ def get_world():
     offices=[dict(x) for x in c.execute("SELECT o.*,p.name AS person_name,k.name AS kingdom FROM offices o JOIN people p ON p.id=o.person_id JOIN kingdoms k ON k.id=o.kingdom_id ORDER BY k.id,o.power DESC")]
     ppl=[dict(x) for x in c.execute("SELECT id,name,age,job,wealth,status,kingdom_id,goal,reputation,hunger,energy,social,health,morale,trait,secondary_trait,last_action,mother_id,father_id,partner_id FROM people WHERE alive=1 ORDER BY RANDOM() LIMIT 16")]
     economy={"markets":c.execute("SELECT COUNT(*) FROM markets").fetchone()[0],"businesses":c.execute("SELECT COUNT(*) FROM businesses WHERE active=1").fetchone()[0],"shipments":c.execute("SELECT COUNT(*) FROM shipments WHERE status='en tránsito'").fetchone()[0],"avg_price":round(c.execute("SELECT COALESCE(AVG(price),0) FROM markets").fetchone()[0])}
-    military={"units":c.execute("SELECT COUNT(*) FROM military_units WHERE status='activo'").fetchone()[0],"personnel":c.execute("SELECT COUNT(*) FROM military_members WHERE active=1").fetchone()[0],"equipment":c.execute("SELECT COUNT(*) FROM equipment WHERE active=1").fetchone()[0],"campaigns":c.execute("SELECT COUNT(*) FROM campaigns WHERE status='activa'").fetchone()[0],"battles":c.execute("SELECT COUNT(*) FROM battles").fetchone()[0],"incidents":c.execute("SELECT COUNT(*) FROM security_incidents WHERE world_day>world_day(?)",(wd,)).fetchone()[0] if False else c.execute("SELECT COUNT(*) FROM security_incidents").fetchone()[0],"cases":c.execute("SELECT COUNT(*) FROM justice_cases WHERE status!='resuelto'").fetchone()[0]}
     c.close()
-    return {"world":w,"population":pop,"nobles":nobles,"families":families,"avg_health":avg_health,"avg_wealth":avg_wealth,"kingdoms":ks,"parties":parties,"offices":offices,"events":events,"people":ppl,"economy":economy,"military":military}
+    return {"world":w,"population":pop,"nobles":nobles,"families":families,"avg_health":avg_health,"avg_wealth":avg_wealth,"kingdoms":ks,"parties":parties,"offices":offices,"events":events,"people":ppl,"economy":economy}
 
 
 @app.get("/api/people/{person_id}")
@@ -682,8 +645,7 @@ def get_layers():
     regions=[dict(x) for x in c.execute("SELECT r.*,k.name kingdom FROM regions r JOIN kingdoms k ON k.id=r.kingdom_id ORDER BY r.id")]
     cities=[dict(x) for x in c.execute("SELECT c.*,r.name region,k.name kingdom FROM cities c JOIN regions r ON r.id=c.region_id JOIN kingdoms k ON k.id=c.kingdom_id ORDER BY c.id")]; districts=[dict(x) for x in c.execute("SELECT d.*,c.name city FROM districts d JOIN cities c ON c.id=d.city_id ORDER BY d.city_id,d.id")]
     properties=[dict(x) for x in c.execute("SELECT p.*,c.name city,d.name district,COALESCE(pe.name,'Sin propietario') owner FROM properties p JOIN cities c ON c.id=p.city_id JOIN districts d ON d.id=p.district_id LEFT JOIN people pe ON pe.id=p.owner_id ORDER BY p.value DESC LIMIT 80")]; resources=[dict(x) for x in c.execute("SELECT r.*,g.name region FROM resources r JOIN regions g ON g.id=r.region_id ORDER BY g.id")]; routes=[dict(x) for x in c.execute("SELECT r.*,a.name from_city,b.name to_city FROM routes r JOIN cities a ON a.id=r.from_city_id JOIN cities b ON b.id=r.to_city_id ORDER BY r.id")]; conflicts=[dict(x) for x in c.execute("SELECT * FROM conflicts ORDER BY id DESC LIMIT 30")]; markets=[dict(x) for x in c.execute("SELECT m.*,c.name city FROM markets m JOIN cities c ON c.id=m.city_id ORDER BY c.id,m.good")]; businesses=[dict(x) for x in c.execute("SELECT b.*,c.name city,COALESCE(p.name,'Sin dueño') owner FROM businesses b JOIN cities c ON c.id=b.city_id LEFT JOIN people p ON p.id=b.owner_id ORDER BY b.capital DESC LIMIT 80")]; shipments=[dict(x) for x in c.execute("SELECT s.*,a.name origin_name,b.name destination_name FROM shipments s JOIN cities a ON a.id=s.origin_city JOIN cities b ON b.id=s.destination_city ORDER BY s.id DESC LIMIT 40")]
-    units=[dict(x) for x in c.execute("SELECT u.*,k.name kingdom,COALESCE(p.name,'Sin comandante') commander,COALESCE(ci.name,'Sin ubicación') city FROM military_units u JOIN kingdoms k ON k.id=u.kingdom_id LEFT JOIN people p ON p.id=u.commander_id LEFT JOIN cities ci ON ci.id=u.location_city_id ORDER BY u.kingdom_id,u.id")]; equipment=[dict(x) for x in c.execute("SELECT e.*,COALESCE(p.name,'Sin propietario') owner FROM equipment e LEFT JOIN people p ON p.id=e.owner_id ORDER BY e.id DESC LIMIT 120")]; incidents=[dict(x) for x in c.execute("SELECT s.*,c.name city,COALESCE(v.name,'Desconocido') victim,COALESCE(p.name,'Desconocido') suspect FROM security_incidents s JOIN cities c ON c.id=s.city_id LEFT JOIN people v ON v.id=s.victim_id LEFT JOIN people p ON p.id=s.suspect_id ORDER BY s.id DESC LIMIT 50")]; cases=[dict(x) for x in c.execute("SELECT j.*,c.name city,COALESCE(p.name,'Desconocido') complainant,COALESCE(a.name,'Desconocido') accused FROM justice_cases j JOIN cities c ON c.id=j.city_id LEFT JOIN people p ON p.id=j.complainant_id LEFT JOIN people a ON a.id=j.accused_id ORDER BY j.id DESC LIMIT 50")]; campaigns=[dict(x) for x in c.execute("SELECT ca.*,k.name kingdom,tk.name target_kingdom FROM campaigns ca JOIN kingdoms k ON k.id=ca.kingdom_id JOIN kingdoms tk ON tk.id=ca.target_kingdom_id ORDER BY ca.id DESC LIMIT 30")]; battles=[dict(x) for x in c.execute("SELECT b.*,ak.name attacker,dk.name defender FROM battles b JOIN kingdoms ak ON ak.id=b.attacker_kingdom_id JOIN kingdoms dk ON dk.id=b.defender_kingdom_id ORDER BY b.id DESC LIMIT 30")]; mercs=[dict(x) for x in c.execute("SELECT m.*,k.name kingdom,COALESCE(p.name,'Sin comandante') commander FROM mercenary_contracts m JOIN kingdoms k ON k.id=m.kingdom_id LEFT JOIN people p ON p.id=m.commander_id ORDER BY m.id DESC")]; contracts=[dict(x) for x in c.execute("SELECT sc.*,COALESCE(e.name,'Desconocido') employer,COALESCE(g.name,'Desconocido') guard FROM security_contracts sc LEFT JOIN people e ON e.id=sc.employer_id LEFT JOIN people g ON g.id=sc.guard_id ORDER BY sc.id DESC LIMIT 50")]
-    c.close(); return {"regions":regions,"cities":cities,"districts":districts,"properties":properties,"resources":resources,"routes":routes,"conflicts":conflicts,"markets":markets,"businesses":businesses,"shipments":shipments,"military_units":units,"equipment":equipment,"incidents":incidents,"cases":cases,"campaigns":campaigns,"battles":battles,"mercenaries":mercs,"security_contracts":contracts}
+    c.close(); return {"regions":regions,"cities":cities,"districts":districts,"properties":properties,"resources":resources,"routes":routes,"conflicts":conflicts,"markets":markets,"businesses":businesses,"shipments":shipments}
 
 @app.get("/api/cities/{city_id}")
 def get_city(city_id:int):
@@ -691,17 +653,46 @@ def get_city(city_id:int):
     if not city: c.close(); raise HTTPException(404,"Ciudad no encontrada")
     districts=[dict(x) for x in c.execute("SELECT * FROM districts WHERE city_id=? ORDER BY id",(city_id,))]; props=[dict(x) for x in c.execute("SELECT p.*,COALESCE(pe.name,'Sin propietario') owner FROM properties p LEFT JOIN people pe ON pe.id=p.owner_id WHERE p.city_id=? ORDER BY p.value DESC",(city_id,))]; people=[dict(x) for x in c.execute("SELECT id,name,age,job,wealth,status,trait FROM people WHERE alive=1 AND city_id=? ORDER BY RANDOM() LIMIT 30",(city_id,))]; c.close(); return {"city":dict(city),"districts":districts,"properties":props,"people":people}
 
-@app.get("/api/military")
-def get_military():
-    catch_up(); c=db()
-    units=[dict(x) for x in c.execute("SELECT u.*,k.name kingdom,COALESCE(p.name,'Sin comandante') commander,COALESCE(ci.name,'Sin ubicación') city FROM military_units u JOIN kingdoms k ON k.id=u.kingdom_id LEFT JOIN people p ON p.id=u.commander_id LEFT JOIN cities ci ON ci.id=u.location_city_id ORDER BY u.kingdom_id,u.id")]
-    for u in units:
-        u['members']=[dict(x) for x in c.execute("SELECT p.id,p.name,p.age,p.job,p.wealth,p.health,p.morale,mm.rank,mm.active FROM military_members mm JOIN people p ON p.id=mm.person_id WHERE mm.unit_id=? ORDER BY mm.rank DESC,p.id",(u['id'],))]
-    c.close(); return {"units":units}
+class DivineAction(BaseModel):
+    action:str
+    target_type:str="world"
+    target_id:int=0
+    parameters:dict={}
+    description:str=""
 
-@app.get("/api/security")
-def get_security():
-    catch_up(); c=db(); incidents=[dict(x) for x in c.execute("SELECT s.*,c.name city,COALESCE(v.name,'Desconocido') victim,COALESCE(p.name,'Desconocido') suspect FROM security_incidents s JOIN cities c ON c.id=s.city_id LEFT JOIN people v ON v.id=s.victim_id LEFT JOIN people p ON p.id=s.suspect_id ORDER BY s.id DESC LIMIT 80")]; cases=[dict(x) for x in c.execute("SELECT j.*,c.name city,COALESCE(p.name,'Desconocido') complainant,COALESCE(a.name,'Desconocido') accused FROM justice_cases j JOIN cities c ON c.id=j.city_id LEFT JOIN people p ON p.id=j.complainant_id LEFT JOIN people a ON a.id=j.accused_id ORDER BY j.id DESC LIMIT 80")]; c.close(); return {"incidents":incidents,"cases":cases}
+class DivineSchedule(BaseModel):
+    execute_in_days:int=1
+    action:str
+    target_type:str="world"
+    target_id:int=0
+    parameters:dict={}
+    description:str=""
+
+@app.get("/api/divine")
+def divine_dashboard():
+    catch_up(); c=db(); w=c.execute("SELECT * FROM world WHERE id=1").fetchone(); wd=world_day(w)
+    interventions=[dict(x) for x in c.execute("SELECT * FROM divine_interventions ORDER BY id DESC LIMIT 50")]
+    schedules=[dict(x) for x in c.execute("SELECT * FROM divine_schedules WHERE active=1 ORDER BY execute_day,id LIMIT 50")]
+    letters=[dict(x) for x in c.execute("SELECT l.*,p.name recipient_name FROM letters l JOIN people p ON p.id=l.recipient_id ORDER BY l.id DESC LIMIT 50")]
+    weather=[dict(x) for x in c.execute("SELECT * FROM divine_weather WHERE active=1 ORDER BY end_day")]
+    c.close(); return {"world_day":wd,"interventions":interventions,"schedules":schedules,"letters":letters,"weather":weather}
+
+@app.post("/api/divine/intervene")
+def divine_intervene(a:DivineAction):
+    catch_up(); c=db(); w=c.execute("SELECT * FROM world WHERE id=1").fetchone(); wd=world_day(w)
+    consequence=execute_divine(c,wd,a.action,a.target_type,a.target_id,a.parameters,a.description)
+    c.commit(); c.close(); return {"ok":True,"consequence":consequence,"world_day":wd}
+
+@app.post("/api/divine/schedule")
+def divine_schedule(a:DivineSchedule):
+    catch_up(); c=db(); w=c.execute("SELECT * FROM world WHERE id=1").fetchone(); wd=world_day(w); execute_day=wd+max(1,min(int(a.execute_in_days),365000))
+    c.execute("INSERT INTO divine_schedules(execute_day,action,target_type,target_id,parameters,description,active) VALUES(?,?,?,?,?,?,1)",(execute_day,a.action,a.target_type,a.target_id,json.dumps(a.parameters,ensure_ascii=False),a.description))
+    divine_log(c,wd,"schedule:"+a.action,a.target_type,a.target_id,a.parameters,f"Intervención programada para el día {execute_day}.","La intervención aún no ha ocurrido.")
+    c.commit(); c.close(); return {"ok":True,"execute_day":execute_day}
+
+@app.delete("/api/divine/schedule/{schedule_id}")
+def cancel_divine_schedule(schedule_id:int):
+    c=db(); c.execute("UPDATE divine_schedules SET active=0 WHERE id=?",(schedule_id,)); c.commit(); c.close(); return {"ok":True}
 
 @app.post("/api/divine/wealth/{kingdom_id}")
 def divine_wealth(kingdom_id:int):
