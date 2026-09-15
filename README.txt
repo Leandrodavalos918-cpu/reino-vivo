@@ -1,18 +1,9 @@
-REINO VIVO v0.7
+REINO VIVO v0.8
+Capa física del mundo: geografía, territorios, ciudades, barrios, propiedades, recursos y rutas.
 
-Versión de profundización del núcleo de vida.
+Instalación local/Render: mantener los mismos archivos y comando de la versión anterior.
+Esta versión migra una base v0.7 existente sin borrar world.db. Si no existe base, crea el mundo inicial.
 
-Incluye:
-- NPCs con necesidades, personalidad, objetivos, rutinas y acciones.
-- Economía personal básica: ingresos, gastos, riqueza y decisiones.
-- Relaciones dinámicas y red social básica.
-- Memoria y conocimiento individual con rumores y certeza limitada.
-- Nacimientos y muertes con consecuencias familiares.
-- Eventos emergentes basados en el estado del mundo.
-- Causalidad registrada para acontecimientos.
-- Narración contextual más rica.
-- Inspección de habitantes, relaciones, conocimiento e historia.
-- Conserva los sistemas políticos y familiares de v0.6.
-- Migración automática de la base SQLite existente de v0.6.
-
-IMPORTANTE: no subir world.db al repositorio. La base de datos debe permanecer en el entorno donde ya está funcionando el mundo.
+Endpoints nuevos:
+GET /api/layers
+GET /api/cities/{city_id}

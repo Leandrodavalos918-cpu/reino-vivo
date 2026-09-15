@@ -6,7 +6,7 @@ import sqlite3, random, os, time, asyncio, threading, math
 SIM_LOCK = threading.Lock()
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.path.join(BASE, "world.db")
-app = FastAPI(title="Reino Vivo v0.7")
+app = FastAPI(title="Reino Vivo v0.8")
 
 MALE = ["Aren","Bran","Corvin","Edric","Garen","Hugo","Ivar","Jon","Kael","Lucan","Marek","Nolan","Oren","Perrin","Ronan","Tomas","Dario","León","Mateo","Silas"]
 FEMALE = ["Aelia","Brina","Celia","Fiona","Gwen","Isla","Lena","Mara","Neria","Olia","Rhea","Selene","Talia","Una","Vera","Yara","Elia","Nora","Livia","Mira"]
@@ -50,6 +50,13 @@ def init():
     CREATE TABLE IF NOT EXISTS party_members(id INTEGER PRIMARY KEY AUTOINCREMENT, party_id INTEGER, person_id INTEGER, role TEXT, loyalty INTEGER, UNIQUE(party_id,person_id));
     CREATE TABLE IF NOT EXISTS offices(id INTEGER PRIMARY KEY AUTOINCREMENT, kingdom_id INTEGER, title TEXT, person_id INTEGER, power INTEGER);
     CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, world_day INTEGER, title TEXT, description TEXT, importance INTEGER);
+    CREATE TABLE IF NOT EXISTS regions(id INTEGER PRIMARY KEY, kingdom_id INTEGER, name TEXT, terrain TEXT, climate TEXT, elevation INTEGER, fertility INTEGER, security INTEGER, description TEXT);
+    CREATE TABLE IF NOT EXISTS cities(id INTEGER PRIMARY KEY, region_id INTEGER, kingdom_id INTEGER, name TEXT, city_type TEXT, population_target INTEGER, wealth INTEGER, security INTEGER, walls INTEGER, port INTEGER, founded_year INTEGER, description TEXT);
+    CREATE TABLE IF NOT EXISTS districts(id INTEGER PRIMARY KEY, city_id INTEGER, name TEXT, district_type TEXT, wealth INTEGER, security INTEGER, population INTEGER, description TEXT);
+    CREATE TABLE IF NOT EXISTS properties(id INTEGER PRIMARY KEY AUTOINCREMENT, city_id INTEGER, district_id INTEGER, owner_id INTEGER, name TEXT, property_type TEXT, value INTEGER, condition INTEGER, workers INTEGER, security INTEGER, production TEXT, history TEXT);
+    CREATE TABLE IF NOT EXISTS resources(id INTEGER PRIMARY KEY AUTOINCREMENT, region_id INTEGER, resource_type TEXT, quantity INTEGER, quality INTEGER, extraction INTEGER);
+    CREATE TABLE IF NOT EXISTS routes(id INTEGER PRIMARY KEY AUTOINCREMENT, from_city_id INTEGER, to_city_id INTEGER, route_type TEXT, distance INTEGER, safety INTEGER, capacity INTEGER, condition INTEGER);
+    CREATE TABLE IF NOT EXISTS conflicts(id INTEGER PRIMARY KEY AUTOINCREMENT, world_day INTEGER, kingdom_id INTEGER, type TEXT, title TEXT, status TEXT, intensity INTEGER, location TEXT, parties TEXT, cause TEXT, description TEXT);
     """)
     # v0.7 additions. Safe on an existing v0.6 database.
     additions = [
@@ -93,7 +100,62 @@ def init():
         if count:
             c.execute("UPDATE people SET hunger=COALESCE(hunger,30), energy=COALESCE(energy,70), social=COALESCE(social,55), security=COALESCE(security,70), health=COALESCE(health,90), morale=COALESCE(morale,65)")
             c.execute("UPDATE people SET trait=COALESCE(NULLIF(trait,''),?), secondary_trait=COALESCE(NULLIF(secondary_trait,''),?), monthly_income=CASE WHEN monthly_income IS NULL OR monthly_income=0 THEN CASE WHEN age>=15 THEN 25 ELSE 0 END ELSE monthly_income END, monthly_expense=CASE WHEN monthly_expense IS NULL OR monthly_expense=0 THEN CASE WHEN age>=15 THEN 12 ELSE 3 END ELSE monthly_expense END, home_quality=COALESCE(home_quality,50), routine=COALESCE(NULLIF(routine,''),job)" ,(random.choice(TRAITS),random.choice(TRAITS)))
+    ensure_physical_world(c)
     c.commit(); c.close()
+
+
+def ensure_physical_world(c):
+    # v0.8 builds a persistent physical layer without resetting an existing world.
+    if c.execute("SELECT COUNT(*) FROM regions").fetchone()[0] == 0:
+        region_defs=[
+            (1,1,"Llanuras de Aurelia","llanura","templado",120,86,78,"Gran zona agrícola atravesada por ríos y caminos antiguos."),
+            (2,1,"Bosque Alto","bosque","húmedo",420,62,72,"Bosques densos y colinas con madera, caza y minerales."),
+            (3,1,"Costa de Puerto Alba","costa","marítimo",20,58,76,"Costa abierta con bahías, pesca y rutas marítimas."),
+            (4,2,"Valle de Valdoria","llanura","templado",180,82,74,"Valle fértil donde se concentran granjas y aldeas."),
+            (5,2,"Montes de Valdoria","montaña","frío de altura",900,48,68,"Cordillera rica en piedra y vetas minerales."),
+            (6,2,"Bahía Gris","costa","marítimo",30,55,70,"Costa rocosa con puerto natural y actividad pesquera.")
+        ]
+        c.executemany("INSERT INTO regions VALUES(?,?,?,?,?,?,?,?,?)",region_defs)
+        city_defs=[
+            (1,1,1,"Puerto Alba","portuaria",420,78,76,1,1,220,"Puerto comercial y pesquero de Aurelia."),
+            (2,1,1,"Río Claro","agrícola",340,65,80,0,0,225,"Ciudad agrícola junto a un gran río."),
+            (3,2,1,"Bosque Alto","forestal",240,54,70,0,0,230,"Asentamiento forestal cercano a colinas minerales."),
+            (4,4,2,"Corona","capital",430,82,78,1,0,218,"Capital administrativa y centro de la corte."),
+            (5,5,2,"Monteluz","minera",250,61,67,1,0,228,"Ciudad de montaña dedicada a minería y metalurgia."),
+            (6,6,2,"Bahía Gris","portuaria",300,63,71,1,1,224,"Puerto de Valdoria y puerta del comercio marítimo.")
+        ]
+        c.executemany("INSERT INTO cities VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",city_defs)
+        districts=[
+            (1,1,"Centro del Puerto","comercial",78,76,120,"Mercados, almacenes y casas de comerciantes."),(2,1,"Barrio de Pescadores","obrero",42,68,110,"Viviendas y talleres junto al muelle."),(3,1,"Colina Noble","noble",92,88,70,"Residencias de familias ricas y funcionarios."),
+            (4,2,"Mercado del Río","comercial",65,80,115,"Mercado principal de granos y ganado."),(5,2,"Barrio de Granjeros","rural",48,78,150,"Casas de trabajadores agrícolas."),(6,2,"Plaza del Consejo","administrativo",76,84,75,"Oficinas y edificios públicos."),
+            (7,3,"Barrio del Bosque","obrero",45,70,110,"Aserraderos, talleres y viviendas."),(8,3,"Camino Minero","industrial",52,65,80,"Ruta hacia canteras y vetas."),
+            (9,4,"Distrito Real","noble",94,91,80,"Palacio, casas nobles y edificios de la corte."),(10,4,"Mercado Central","comercial",72,79,140,"Comercio mayorista y minorista."),(11,4,"Barrio Popular","obrero",40,67,150,"Zona densamente poblada de trabajadores."),
+            (12,5,"Ciudad Alta","noble",70,74,70,"Residencias de propietarios mineros."),(13,5,"Barrio de Herreros","industrial",58,65,100,"Forjas y talleres metalúrgicos."),(14,5,"Campamento Minero","obrero",38,58,90,"Viviendas de mineros y transportistas."),
+            (15,6,"Muelle Gris","comercial",66,72,105,"Muelle y almacenes portuarios."),(16,6,"Barrio de Marineros","obrero",45,64,100,"Tabernas y viviendas de tripulantes."),(17,6,"Plaza de la Bahía","administrativo",68,78,95,"Administración local y mercado.")
+        ]
+        c.executemany("INSERT INTO districts VALUES(?,?,?,?,?,?,?,?)",districts)
+        res=[(1,1,"trigo",900,82,62),(2,1,"madera",500,76,45),(3,2,"pesca",650,80,58),(4,2,"madera",800,85,60),(5,2,"hierro",380,68,32),(6,3,"pescado",700,77,65),(7,4,"trigo",850,86,61),(8,5,"hierro",720,82,58),(9,5,"piedra",900,88,70),(10,6,"pescado",620,79,55),(11,6,"sal",400,74,42)]
+        c.executemany("INSERT INTO resources(id,region_id,resource_type,quantity,quality,extraction) VALUES(?,?,?,?,?,?)",res)
+        routes=[(1,2,"camino",95,82,180,78),(2,3,"camino",70,72,120,69),(1,3,"camino",110,74,120,72),(4,5,"camino montañoso",130,61,90,64),(5,6,"camino",150,66,110,68),(4,6,"carretera",125,73,150,76),(1,6,"marítima",210,69,220,73)]
+        c.executemany("INSERT INTO routes(from_city_id,to_city_id,route_type,distance,safety,capacity,condition) VALUES(?,?,?,?,?,?,?)",routes)
+        for cid in range(1,7):
+            for did in [r[0] for r in districts if r[1]==cid]:
+                for _ in range(5 if cid in (1,4) else 3):
+                    owner=c.execute("SELECT id FROM people WHERE alive=1 AND kingdom_id=? ORDER BY RANDOM() LIMIT 1",(1 if cid<=3 else 2,)).fetchone()
+                    owner_id=owner[0] if owner else None
+                    typ=random.choice(["casa","taller","tienda","almacén","finca"]); val=random.randint(120,1600)
+                    c.execute("INSERT INTO properties(city_id,district_id,owner_id,name,property_type,value,condition,workers,security,production,history) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(cid,did,owner_id,f"{typ.title()} {cid}-{did}-{random.randint(10,99)}",typ,val,random.randint(55,95),random.randint(0,8),random.randint(40,90),random.choice(["trigo","madera","pescado","metal","comercio","servicios","ninguna"]),"Propiedad registrada al inicio de la capa física."))
+        # Place every existing inhabitant in a city and district if their schema does not yet have it.
+    add_col(c,"people","city_id","INTEGER",None); add_col(c,"people","district_id","INTEGER",None); add_col(c,"people","property_id","INTEGER",None)
+    missing=c.execute("SELECT id,kingdom_id FROM people WHERE city_id IS NULL AND alive=1").fetchall()
+    city_by_k={1:[1,2,3],2:[4,5,6]}
+    for person in missing:
+        cid=random.choice(city_by_k[person["kingdom_id"]]); ds=[r[0] for r in c.execute("SELECT id FROM districts WHERE city_id=?",(cid,)).fetchall()]; did=random.choice(ds)
+        c.execute("UPDATE people SET city_id=?,district_id=? WHERE id=?",(cid,did,person["id"]))
+    # Sync city population counters from actual inhabitants.
+    for cid in range(1,7):
+        n=c.execute("SELECT COUNT(*) FROM people WHERE alive=1 AND city_id=?",(cid,)).fetchone()[0]
+        c.execute("UPDATE cities SET population_target=? WHERE id=?",(max(n,1),cid))
 
 
 def seed_families(c):
@@ -379,6 +441,20 @@ def speed(s:Speed):
 @app.post("/api/pause")
 def pause(p:Pause):
     c=db(); c.execute("UPDATE world SET paused=? WHERE id=1",(1 if p.paused else 0,)); c.commit(); c.close(); return get_world()
+
+@app.get("/api/layers")
+def get_layers():
+    catch_up(); c=db()
+    regions=[dict(x) for x in c.execute("SELECT r.*,k.name kingdom FROM regions r JOIN kingdoms k ON k.id=r.kingdom_id ORDER BY r.id")]
+    cities=[dict(x) for x in c.execute("SELECT c.*,r.name region,k.name kingdom FROM cities c JOIN regions r ON r.id=c.region_id JOIN kingdoms k ON k.id=c.kingdom_id ORDER BY c.id")]; districts=[dict(x) for x in c.execute("SELECT d.*,c.name city FROM districts d JOIN cities c ON c.id=d.city_id ORDER BY d.city_id,d.id")]
+    properties=[dict(x) for x in c.execute("SELECT p.*,c.name city,d.name district,COALESCE(pe.name,'Sin propietario') owner FROM properties p JOIN cities c ON c.id=p.city_id JOIN districts d ON d.id=p.district_id LEFT JOIN people pe ON pe.id=p.owner_id ORDER BY p.value DESC LIMIT 80")]; resources=[dict(x) for x in c.execute("SELECT r.*,g.name region FROM resources r JOIN regions g ON g.id=r.region_id ORDER BY g.id")]; routes=[dict(x) for x in c.execute("SELECT r.*,a.name from_city,b.name to_city FROM routes r JOIN cities a ON a.id=r.from_city_id JOIN cities b ON b.id=r.to_city_id ORDER BY r.id")]; conflicts=[dict(x) for x in c.execute("SELECT * FROM conflicts ORDER BY id DESC LIMIT 30")]
+    c.close(); return {"regions":regions,"cities":cities,"districts":districts,"properties":properties,"resources":resources,"routes":routes,"conflicts":conflicts}
+
+@app.get("/api/cities/{city_id}")
+def get_city(city_id:int):
+    catch_up(); c=db(); city=c.execute("SELECT c.*,r.name region,k.name kingdom FROM cities c JOIN regions r ON r.id=c.region_id JOIN kingdoms k ON k.id=c.kingdom_id WHERE c.id=?",(city_id,)).fetchone()
+    if not city: c.close(); raise HTTPException(404,"Ciudad no encontrada")
+    districts=[dict(x) for x in c.execute("SELECT * FROM districts WHERE city_id=? ORDER BY id",(city_id,))]; props=[dict(x) for x in c.execute("SELECT p.*,COALESCE(pe.name,'Sin propietario') owner FROM properties p LEFT JOIN people pe ON pe.id=p.owner_id WHERE p.city_id=? ORDER BY p.value DESC",(city_id,))]; people=[dict(x) for x in c.execute("SELECT id,name,age,job,wealth,status,trait FROM people WHERE alive=1 AND city_id=? ORDER BY RANDOM() LIMIT 30",(city_id,))]; c.close(); return {"city":dict(city),"districts":districts,"properties":props,"people":people}
 
 @app.post("/api/divine/wealth/{kingdom_id}")
 def divine_wealth(kingdom_id:int):
