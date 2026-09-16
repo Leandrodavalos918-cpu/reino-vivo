@@ -6,7 +6,7 @@ import sqlite3, random, os, time, asyncio, threading, math, json
 SIM_LOCK = threading.Lock()
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.path.join(BASE, "world.db")
-app = FastAPI(title="Reino Vivo v1.1 — Sistema Divino")
+app = FastAPI(title="Reino Vivo v1.2 — Crónica Profunda y Sistema Divino")
 
 MALE = ["Aren","Bran","Corvin","Edric","Garen","Hugo","Ivar","Jon","Kael","Lucan","Marek","Nolan","Oren","Perrin","Ronan","Tomas","Dario","León","Mateo","Silas"]
 FEMALE = ["Aelia","Brina","Celia","Fiona","Gwen","Isla","Lena","Mara","Neria","Olia","Rhea","Selene","Talia","Una","Vera","Yara","Elia","Nora","Livia","Mira"]
@@ -50,6 +50,7 @@ def init():
     CREATE TABLE IF NOT EXISTS party_members(id INTEGER PRIMARY KEY AUTOINCREMENT, party_id INTEGER, person_id INTEGER, role TEXT, loyalty INTEGER, UNIQUE(party_id,person_id));
     CREATE TABLE IF NOT EXISTS offices(id INTEGER PRIMARY KEY AUTOINCREMENT, kingdom_id INTEGER, title TEXT, person_id INTEGER, power INTEGER);
     CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, world_day INTEGER, title TEXT, description TEXT, importance INTEGER);
+    CREATE TABLE IF NOT EXISTS daily_chronicles(id INTEGER PRIMARY KEY AUTOINCREMENT, world_day INTEGER UNIQUE, title TEXT, narrative TEXT, divine_summary TEXT DEFAULT '', created_at REAL);
     CREATE TABLE IF NOT EXISTS regions(id INTEGER PRIMARY KEY, kingdom_id INTEGER, name TEXT, terrain TEXT, climate TEXT, elevation INTEGER, fertility INTEGER, security INTEGER, description TEXT);
     CREATE TABLE IF NOT EXISTS cities(id INTEGER PRIMARY KEY, region_id INTEGER, kingdom_id INTEGER, name TEXT, city_type TEXT, population_target INTEGER, wealth INTEGER, security INTEGER, walls INTEGER, port INTEGER, founded_year INTEGER, description TEXT);
     CREATE TABLE IF NOT EXISTS districts(id INTEGER PRIMARY KEY, city_id INTEGER, name TEXT, district_type TEXT, wealth INTEGER, security INTEGER, population INTEGER, description TEXT);
@@ -302,6 +303,63 @@ def economy_daily_tick(c,wd):
             add_event(c,wd,"Escasez en un mercado",f"La oferta de {m['good']} en {m['city']} quedó por debajo de la demanda y su precio subió a {m['price']} monedas.",3,cause="oferta insuficiente frente a la demanda",location=m['city'])
 
 def world_day(w): return (w["year"]-247)*365+w["day"]
+
+
+def create_daily_chronicle(c, wd, before, births, deaths):
+    """Build a long daily chronicle strictly from the state and events produced by this simulation tick."""
+    w=c.execute("SELECT * FROM world WHERE id=1").fetchone()
+    pop=c.execute("SELECT COUNT(*) FROM people WHERE alive=1").fetchone()[0]
+    adults=c.execute("SELECT COUNT(*) FROM people WHERE alive=1 AND age>=15").fetchone()[0]
+    markets=c.execute("SELECT COUNT(*) FROM markets").fetchone()[0]
+    shipments=c.execute("SELECT COUNT(*) FROM shipments WHERE status='en tránsito'").fetchone()[0]
+    businesses=c.execute("SELECT COUNT(*) FROM businesses WHERE active=1").fetchone()[0]
+    conflicts=c.execute("SELECT COUNT(*) FROM conflicts WHERE status='activo'").fetchone()[0]
+    avg_price=round(c.execute("SELECT COALESCE(AVG(price),0) FROM markets").fetchone()[0])
+    avg_wealth=round(c.execute("SELECT COALESCE(AVG(wealth),0) FROM people WHERE alive=1").fetchone()[0])
+    actions=c.execute("SELECT last_action,COUNT(*) n FROM people WHERE alive=1 AND last_action_day=? GROUP BY last_action ORDER BY n DESC",(wd,)).fetchall()
+    action_text=', '.join(f"{r['n']} {r['last_action']}" for r in actions[:5]) or 'rutinas cotidianas sin cambios destacados'
+    recent=c.execute("SELECT * FROM events WHERE world_day=? ORDER BY importance DESC,id ASC LIMIT 12",(wd,)).fetchall()
+    # Pick factual market pressure from current state.
+    tight=c.execute("SELECT m.good,c.name,m.stock,m.demand,m.price FROM markets m JOIN cities c ON c.id=m.city_id WHERE m.demand>m.stock*1.7 ORDER BY (m.demand-max(m.stock,1)) DESC LIMIT 3").fetchall()
+    kingdom_rows=c.execute("SELECT id,name,gold,stability FROM kingdoms ORDER BY id").fetchall()
+    city_rows=c.execute("SELECT name,wealth,security,population_target FROM cities ORDER BY wealth DESC LIMIT 6").fetchall()
+    route_rows=c.execute("SELECT a.name af,b.name bt,r.safety,r.condition FROM routes r JOIN cities a ON a.id=r.from_city_id JOIN cities b ON b.id=r.to_city_id ORDER BY r.safety ASC LIMIT 2").fetchall()
+    paragraphs=[]
+    paragraphs.append(f"El día {wd} transcurrió con {pop:,} habitantes vivos, de los cuales {adults:,} son mayores de 14 años. La vida cotidiana continuó alrededor del trabajo, el descanso, la alimentación, las relaciones y la búsqueda de ingresos. Entre las acciones registradas hoy destacan {action_text}.")
+    if births or deaths:
+        btxt = ', '.join(x[0] if isinstance(x, tuple) else str(x) for x in births[:6]) if births else 'ningún nacimiento registrado'
+        dtxt = ', '.join(x['name'] for x in deaths[:6]) if deaths else 'ninguna muerte registrada'
+        paragraphs.append(f"La demografía también cambió. Nacieron {len(births)} personas ({btxt}) y murieron {len(deaths)}. Las muertes registradas corresponden a {dtxt}. Cada nacimiento y cada muerte modifica familias, relaciones, herencias, trabajo y las decisiones futuras de quienes quedan vinculados.")
+    else:
+        paragraphs.append("No se registraron nacimientos ni muertes durante esta jornada. La estructura demográfica permaneció estable por ahora, aunque las familias y relaciones continuaron evolucionando en segundo plano.")
+    if tight:
+        items='; '.join(f"{r['good']} en {r['name']} (stock {r['stock']}, demanda {r['demand']}, precio {r['price']})" for r in tight)
+        paragraphs.append(f"En la economía, los mercados operaron con {markets} plazas activas y {businesses} negocios activos. El precio medio registrado fue de {avg_price} monedas y la riqueza media individual fue de {avg_wealth}. Se observó presión de demanda en {items}. Esto no significa automáticamente una crisis: los comerciantes y hogares reaccionan de forma distinta según sus reservas y necesidades.")
+    else:
+        paragraphs.append(f"La actividad económica se mantuvo sin una escasez marcada en los mercados observados. Funcionaron {markets} mercados y {businesses} negocios activos; había {shipments} cargamentos en tránsito. El precio medio fue de {avg_price} monedas y la riqueza media individual, {avg_wealth} monedas.")
+    if route_rows:
+        routes='; '.join(f"{r['af']}–{r['bt']} (seguridad {r['safety']}%, condición {r['condition']}%)" for r in route_rows)
+        paragraphs.append(f"El movimiento siguió dependiendo de las rutas físicas. Las conexiones con menor seguridad registradas hoy fueron {routes}. Había {shipments} envíos en tránsito, por lo que parte de la actividad comercial de este día todavía tendrá consecuencias en jornadas posteriores.")
+    paragraphs.append(f"En política y seguridad, el mundo conserva {conflicts} conflictos activos. La estabilidad de los reinos y las relaciones entre sus grupos continúan cambiando según decisiones, recursos, información y acontecimientos anteriores; ningún acontecimiento aislado determina por sí solo el rumbo futuro.")
+    if recent:
+        detail=[]
+        for e in recent[:8]:
+            loc=f" en {e['location']}" if e['location'] else ''
+            cause=f" La causa registrada fue {e['cause']}." if e['cause'] else ''
+            detail.append(f"{e['title']}{loc}: {e['description']}{cause}")
+        paragraphs.append("Entre los acontecimientos concretos del día se registraron: " + " ".join(detail))
+    else:
+        paragraphs.append("No hubo acontecimientos de alta importancia registrados en la crónica durante esta jornada. Eso no significa que el mundo estuviera inmóvil: las rutinas, decisiones pequeñas, movimientos y cambios internos continuaron y pueden adquirir importancia más adelante.")
+    narrative='\n\n'.join(paragraphs)
+    # Divine view exposes the full simulation-side state, not a fabricated prediction.
+    hidden=[]
+    unknown_knowledge=c.execute("SELECT COUNT(*) FROM knowledge WHERE certainty<50").fetchone()[0]
+    hidden.append(f"La simulación registra {unknown_knowledge} piezas de información con certeza inferior al 50%, por lo que no todos los habitantes comparten una visión fiable de los hechos.")
+    hidden.append(f"Estado interno al cierre: población {pop}, conflictos activos {conflicts}, envíos en tránsito {shipments}, precio medio {avg_price}.")
+    if recent:
+        hidden.append("El observador puede inspeccionar cada acontecimiento y sus actores desde las capas de Historia y Personas.")
+    divine=' '.join(hidden)
+    c.execute("INSERT OR REPLACE INTO daily_chronicles(world_day,title,narrative,divine_summary,created_at) VALUES(?,?,?,?,?)",(wd,f"Crónica del día {wd}",narrative,divine,time.time()))
 
 
 def add_event(c,wd,title,desc,importance,cause="",location="",actors=""):
@@ -557,15 +615,21 @@ def _tick_unlocked(days=1):
             day=1; year+=1
             c.execute("UPDATE people SET age=age+1 WHERE alive=1")
             add_event(c,wd,"Comienza un nuevo año",f"El año {year} comienza en Aurelia y Valdoria. Las personas continúan sus vidas mientras cambian lentamente las relaciones, fortunas y objetivos.",4,cause="paso del tiempo",location="Aurelia y Valdoria")
+        before={
+            "population": c.execute("SELECT COUNT(*) FROM people WHERE alive=1").fetchone()[0],
+            "conflicts": c.execute("SELECT COUNT(*) FROM conflicts WHERE status='activo'").fetchone()[0],
+            "shipments": c.execute("SELECT COUNT(*) FROM shipments WHERE status='en tránsito'").fetchone()[0]
+        }
         process_divine_schedules(c,wd)
         needs_and_daily_economy(c,wd)
         economy_daily_tick(c,wd)
         relationship_tick(c,wd)
-        birth_tick(c,wd)
-        death_tick(c,wd)
+        births=birth_tick(c,wd)
+        deaths=death_tick(c,wd)
         if wd%7==0: political_tick(c,wd)
         social_events(c,wd)
         c.execute("UPDATE world SET year=?,day=?,last_real=? WHERE id=1",(year,day,time.time()))
+        create_daily_chronicle(c,wd,before,births,deaths)
     c.commit(); c.close()
 
 
@@ -608,12 +672,13 @@ def get_world():
     avg_health=round(c.execute("SELECT COALESCE(AVG(health),0) FROM people WHERE alive=1").fetchone()[0])
     avg_wealth=round(c.execute("SELECT COALESCE(AVG(wealth),0) FROM people WHERE alive=1").fetchone()[0])
     events=[dict(x) for x in c.execute("SELECT * FROM events ORDER BY id DESC LIMIT 15")]
+    chronicles=[dict(x) for x in c.execute("SELECT * FROM daily_chronicles ORDER BY world_day DESC LIMIT 10")]
     parties=[dict(x) for x in c.execute("SELECT p.*,k.name AS kingdom FROM parties p JOIN kingdoms k ON k.id=p.kingdom_id ORDER BY k.id,p.influence DESC")]
     offices=[dict(x) for x in c.execute("SELECT o.*,p.name AS person_name,k.name AS kingdom FROM offices o JOIN people p ON p.id=o.person_id JOIN kingdoms k ON k.id=o.kingdom_id ORDER BY k.id,o.power DESC")]
     ppl=[dict(x) for x in c.execute("SELECT id,name,age,job,wealth,status,kingdom_id,goal,reputation,hunger,energy,social,health,morale,trait,secondary_trait,last_action,mother_id,father_id,partner_id FROM people WHERE alive=1 ORDER BY RANDOM() LIMIT 16")]
     economy={"markets":c.execute("SELECT COUNT(*) FROM markets").fetchone()[0],"businesses":c.execute("SELECT COUNT(*) FROM businesses WHERE active=1").fetchone()[0],"shipments":c.execute("SELECT COUNT(*) FROM shipments WHERE status='en tránsito'").fetchone()[0],"avg_price":round(c.execute("SELECT COALESCE(AVG(price),0) FROM markets").fetchone()[0])}
     c.close()
-    return {"world":w,"population":pop,"nobles":nobles,"families":families,"avg_health":avg_health,"avg_wealth":avg_wealth,"kingdoms":ks,"parties":parties,"offices":offices,"events":events,"people":ppl,"economy":economy}
+    return {"world":w,"population":pop,"nobles":nobles,"families":families,"avg_health":avg_health,"avg_wealth":avg_wealth,"kingdoms":ks,"parties":parties,"offices":offices,"events":events,"chronicles":chronicles,"people":ppl,"economy":economy}
 
 
 @app.get("/api/people/{person_id}")

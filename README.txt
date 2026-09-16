@@ -1,40 +1,28 @@
-REINO VIVO v1.1 CORREGIDA — SISTEMA DIVINO
+REINO VIVO v1.2 — CRÓNICA PROFUNDA + SISTEMA DIVINO
 
-Esta versión corrige el bloqueo de interfaz que dejaba la pantalla en “Cargando...” y mostraba guiones cuando el JavaScript no llegaba a ejecutarse correctamente.
+Esta versión continúa sobre v1.1.
 
-CORRECCIONES
-- Se eliminaron secuencias de salto de línea mal formadas que provocaban un error de sintaxis JavaScript y detenían toda la aplicación.
-- La interfaz ahora muestra un mensaje de error visible y un botón de reintento si la API no responde.
-- Las llamadas a la API tienen un tiempo máximo de espera de 10 segundos y muestran el motivo del fallo.
-- La página ahora carga también el panel Dios después de cargar correctamente el mundo.
-- Se actualizó el título HTML a v1.1.
-- Se añadieron Procfile y render.yaml para facilitar un despliegue correcto en Render usando el puerto PORT.
+NOVEDAD PRINCIPAL
+- Crónica diaria profunda basada en el estado y los acontecimientos generados por la simulación.
+- Cada avance temporal crea una crónica persistente del día.
+- La crónica resume población, rutinas, demografía, economía, rutas, conflictos y acontecimientos concretos.
+- Los acontecimientos individuales siguen disponibles por separado.
+- La vista del observador incluye un bloque de información interna de la simulación.
 
 SISTEMA DIVINO
-- Intervenciones inmediatas: riqueza, muerte, salvación, cartas, conflictos, conocimiento, relaciones, recursos y clima.
-- Intervenciones futuras programadas.
-- Historial divino.
-- Cartas con destinatarios concretos.
-- Fenómenos climáticos.
-- Los NPC no conocen al usuario como entidad externa.
-
-TECNOLOGÍA
-- FastAPI + Uvicorn
-- SQLite como base de prototipo heredada de v0.9
-- Frontend HTML/CSS/JavaScript responsive
-- world.db se genera al iniciar si no existe.
-
-EJECUCIÓN LOCAL
-pip install -r requirements.txt
-uvicorn server:app --host 0.0.0.0 --port 8000
-Abrir / en el navegador.
-
-RENDER
-Build Command:
-pip install -r requirements.txt
-
-Start Command:
-uvicorn server:app --host 0.0.0.0 --port $PORT
+- Intervenciones inmediatas y programadas.
+- Cartas, conflictos, riqueza, conocimiento, relaciones, recursos y clima.
+- Registro de intervenciones y consecuencias.
 
 IMPORTANTE
-La prueba realizada antes de entregar esta versión es local: servidor, API, base de datos, JavaScript y endpoints principales. No se puede afirmar desde aquí que tu servicio concreto de Render esté actualizado hasta que se despliegue este ZIP.
+- SQLite se mantiene como base de esta rama prototipo para conservar compatibilidad con las versiones actuales.
+- PostgreSQL sigue siendo objetivo de la arquitectura final.
+- Si se despliega sobre un mundo existente, la nueva tabla daily_chronicles se crea automáticamente.
+
+PRUEBAS
+- server.py compila correctamente.
+- JavaScript pasa comprobación de sintaxis.
+- El servidor FastAPI inicia correctamente.
+- /api/world responde.
+- /api/advance responde.
+- Al avanzar un día se genera una crónica persistente de más de 2.000 caracteres en la prueba.
