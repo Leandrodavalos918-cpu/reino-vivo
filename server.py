@@ -643,11 +643,15 @@ def tick(days=1):
     with SIM_LOCK: _tick_unlocked(max(1,int(days)))
 
 
+def _catch_up_unlocked():
+    c=db(); w=c.execute("SELECT * FROM world WHERE id=1").fetchone(); c.close()
+    missed=min(int(max(0,time.time()-w["last_real"])/86400*3),90)
+    if missed and not w["paused"]: _tick_unlocked(missed)
+
+
 def catch_up():
     with SIM_LOCK:
-        c=db(); w=c.execute("SELECT * FROM world WHERE id=1").fetchone(); c.close()
-        missed=min(int(max(0,time.time()-w["last_real"])/86400*3),90)
-        if missed and not w["paused"]: _tick_unlocked(missed)
+        _catch_up_unlocked()
 
 
 async def background_loop():
@@ -750,16 +754,31 @@ def divine_dashboard():
 
 @app.post("/api/divine/intervene")
 def divine_intervene(a:DivineAction):
-    catch_up(); c=db(); w=c.execute("SELECT * FROM world WHERE id=1").fetchone(); wd=world_day(w)
-    consequence=execute_divine(c,wd,a.action,a.target_type,a.target_id,a.parameters,a.description)
-    c.commit(); c.close(); return {"ok":True,"consequence":consequence,"world_day":wd}
+    # Manual divine actions must share the same process lock as the autonomous
+    # simulation. Otherwise a background tick can hold a SQLite write transaction
+    # while this request tries to write, producing "database is locked".
+    with SIM_LOCK:
+        _catch_up_unlocked()
+        c=db(); w=c.execute("SELECT * FROM world WHERE id=1").fetchone(); wd=world_day(w)
+        try:
+            consequence=execute_divine(c,wd,a.action,a.target_type,a.target_id,a.parameters,a.description)
+            c.commit()
+            return {"ok":True,"consequence":consequence,"world_day":wd}
+        finally:
+            c.close()
 
 @app.post("/api/divine/schedule")
 def divine_schedule(a:DivineSchedule):
-    catch_up(); c=db(); w=c.execute("SELECT * FROM world WHERE id=1").fetchone(); wd=world_day(w); execute_day=wd+max(1,min(int(a.execute_in_days),365000))
-    c.execute("INSERT INTO divine_schedules(execute_day,action,target_type,target_id,parameters,description,active) VALUES(?,?,?,?,?,?,1)",(execute_day,a.action,a.target_type,a.target_id,json.dumps(a.parameters,ensure_ascii=False),a.description))
-    divine_log(c,wd,"schedule:"+a.action,a.target_type,a.target_id,a.parameters,f"Intervención programada para el día {execute_day}.","La intervención aún no ha ocurrido.")
-    c.commit(); c.close(); return {"ok":True,"execute_day":execute_day}
+    with SIM_LOCK:
+        _catch_up_unlocked()
+        c=db(); w=c.execute("SELECT * FROM world WHERE id=1").fetchone(); wd=world_day(w); execute_day=wd+max(1,min(int(a.execute_in_days),365000))
+        try:
+            c.execute("INSERT INTO divine_schedules(execute_day,action,target_type,target_id,parameters,description,active) VALUES(?,?,?,?,?,?,1)",(execute_day,a.action,a.target_type,a.target_id,json.dumps(a.parameters,ensure_ascii=False),a.description))
+            divine_log(c,wd,"schedule:"+a.action,a.target_type,a.target_id,a.parameters,f"Intervención programada para el día {execute_day}.","La intervención aún no ha ocurrido.")
+            c.commit()
+            return {"ok":True,"execute_day":execute_day}
+        finally:
+            c.close()
 
 @app.delete("/api/divine/schedule/{schedule_id}")
 def cancel_divine_schedule(schedule_id:int):
