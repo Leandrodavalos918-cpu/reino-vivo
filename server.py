@@ -19,9 +19,12 @@ TRAITS = ["prudente","ambicioso","generoso","desconfiado","sociable","reservado"
 
 
 def db():
-    c = sqlite3.connect(DB, timeout=30)
+    # SQLite en Render puede recibir lecturas y escrituras simultáneas.
+    # WAL + busy_timeout reduce bloqueos entre el motor autónomo y las peticiones HTTP.
+    c = sqlite3.connect(DB, timeout=60, check_same_thread=False)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA foreign_keys=ON")
+    c.execute("PRAGMA busy_timeout=60000")
     return c
 
 
@@ -36,6 +39,9 @@ def add_col(c, table, col, typ, default=None):
 
 def init():
     c = db()
+    # Activar WAL una sola vez para permitir lectores mientras el motor escribe.
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA synchronous=NORMAL")
     c.executescript("""
     CREATE TABLE IF NOT EXISTS world(id INTEGER PRIMARY KEY CHECK(id=1), year INTEGER, day INTEGER, speed INTEGER, paused INTEGER, last_real REAL);
     CREATE TABLE IF NOT EXISTS kingdoms(id INTEGER PRIMARY KEY, name TEXT, ruler TEXT, ruler_title TEXT, gold INTEGER, stability INTEGER);
